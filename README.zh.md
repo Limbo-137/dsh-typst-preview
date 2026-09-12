@@ -33,7 +33,7 @@ English: [README.md](README.md)。
 | **凭据** | 无。不读任何 token/key/cookie；唯一的"环境"用途是定位 `tinymist` 与用户家目录。 |
 | **生命周期脚本** | 没有 `preinstall`/`install`/`postinstall`/`prepare`，安装与更新时不执行任何代码（这也是 `lib/` 入库的原因）。 |
 
-**外部依赖**：[`tinymist`](https://github.com/Myriad-Dreamin/tinymist) 需在 `PATH`（或用 `tinymistPath` 指定），实测版本 `v0.15.0-rc1`。Typst 默认字体是拉丁字体，中文文档需自带字体栈，见下一节。
+**外部依赖**：[`tinymist`](https://github.com/Myriad-Dreamin/tinymist) 需在 `PATH`（或用 `tinymistPath` 指定），实测版本 `v0.15.0-rc1`。
 
 **缺东西或出错时**：没有 `tinymist` → 预览面报错、源码面退回纯文本；文件超过 `highlightMaxBytes`（4 MiB）→ 不高亮但仍可读；预览进程崩溃/被杀 → 回收器清理，下次按需重启；进程数有上限（`maxInstances`，外加两倍硬闸），闲置与游离的子进程都会被回收，所以丢掉的子进程活不过启动它的那个 tab。
 
@@ -137,16 +137,6 @@ node scripts/gui-check.mjs "http://127.0.0.1:3080/?token=…" probe-typst.typ
 ```
 
 `gui-check.mjs` 会在失败时打印诊断（面板文本、只读快照 `globalThis.__dshTypstDebug`、一次直接 `open` 的往返结果）。
-
-## 中文（以及任何非拉丁文字）
-
-Typst 默认字体是拉丁字体，没有设字体的中文文档会渲染成一串空框——在这个预览里、在 `typst compile` 里、在任何地方都一样。这是**文档**属性而不是插件属性：在文件里（或它 import 的 preamble 里）设好字体，两个面都会跟上。
-
-```typst
-#set text(font: ("New Computer Modern", "Songti SC", "STSong", "Source Han Sans SC", "SimSun"))
-```
-
-`typst fonts` 可以列出本机可用字体；macOS 上 `Songti SC` / `PingFang SC` / `Heiti SC` 一定在。字体栈让拉丁字体负责公式与英文，中文由后面的字体兜底。装不到系统里的字体用 `extraArgs: ['--font-path', '…']`。要让中文预览有意义，入口文件必须像 `typst compile` 一样在内容之前设好它。
 
 ## 已知边界
 

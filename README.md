@@ -59,8 +59,7 @@ shows you what changed and you confirm it — rather than auto-approving it.
 | **Lifecycle** | No `preinstall`/`install`/`postinstall`/`prepare`. Nothing runs at install or update time, which is also why `lib/` is committed. |
 
 **External dependency**: [`tinymist`](https://github.com/Myriad-Dreamin/tinymist) must be on `PATH`
-(or given via `tinymistPath`); verified against `v0.15.0-rc1`. Typst's default font is a Latin one,
-so a document that renders Chinese needs its own font stack — see the section below.
+(or given via `tinymistPath`); verified against `v0.15.0-rc1`.
 
 **When things are missing or fail**: no `tinymist` means the Preview face shows the error and the
 Source face falls back to plain text; a file over `highlightMaxBytes` (4 MiB) loses highlighting but
@@ -197,23 +196,6 @@ node scripts/gui-check.mjs "http://127.0.0.1:3080/?token=…" probe-typst.typ
 
 `gui-check.mjs` prints diagnostics on failure (panel text, the read-only
 `globalThis.__dshTypstDebug` snapshot, and one direct `open` round-trip).
-
-## Chinese (and any non-Latin) text
-
-Typst's default font is a Latin one, so a document that never sets a font renders its
-Chinese as empty boxes — in this preview, in `typst compile`, and everywhere else. This is a
-document property, not a plugin one: put the font in the file (or in the preamble you
-import), and both faces follow.
-
-```typst
-#set text(font: ("New Computer Modern", "Songti SC", "STSong", "Source Han Sans SC", "SimSun"))
-```
-
-`typst fonts` lists what the machine has; on macOS `Songti SC` / `PingFang SC` / `Heiti SC`
-are always present, and a stack lets the Latin font win for formulas and English while CJK
-falls through. `extraArgs: ['--font-path', '…']` covers fonts that are not installed
-system-wide. For a preview of Chinese text to be meaningful the entrypoint must set this
-before the content, exactly as with `typst compile`.
 
 ## Known limits
 
