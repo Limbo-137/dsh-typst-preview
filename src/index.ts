@@ -325,6 +325,9 @@ export function apply(ctx: Context, config?: TypstPreviewConfig): void {
         pagePrefix: PAGE_PREFIX,
         wsPrefix: WS_PREFIX,
         highlight: { enabled: highlightEnabled, lines: lineLimit, servers: highlighter?.list() ?? [] },
+        // `processes` counts every child this plugin owns, `instances` only the
+        // reusable ones: the two disagreeing is the shape of a leak.
+        processes: previews.processCount,
         instances: previews.list().map((instance) => ({
           token: instance.token,
           file: instance.file,

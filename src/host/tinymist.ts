@@ -175,32 +175,93 @@ function waitForReady(port: number, timeoutMs: number, isAlive: () => boolean): 
   })
 }
 
-/** Terminate a child and wait for it to release its ports before the next spawn. */
+/**
+ * Terminate a child and wait for it to release its ports before the next spawn.
+ *
+ * The exit check reads the process handle, not only the manager's own flag: a
+ * child that is still running must never be treated as already gone, because that
+ * is the one mistake that leaves a hundred-megabyte compiler behind with nothing
+ * left in the process to reach it.
+ */
 function stopProcess(instance: PreviewInstance): Promise<void> {
-  if (instance.exited) return Promise.resolve()
+  const proc = instance.proc
+  if (instance.exited || proc.exitCode !== null || proc.signalCode !== null) return Promise.resolve()
+  if (proc.pid === undefined) {
+    instance.exited = true
+    return Promise.resolve()
+  }
   return new Promise((settle) => {
     const timer = setTimeout(() => {
-      instance.proc.kill('SIGKILL')
+      try {
+        proc.kill('SIGKILL')
+      } catch {
+        /* already gone */
+      }
       settle()
     }, 3000)
-    instance.proc.once('exit', () => {
+    proc.once('exit', () => {
       clearTimeout(timer)
       settle()
     })
-    instance.proc.kill('SIGTERM')
+    try {
+      proc.kill('SIGTERM')
+    } catch {
+      clearTimeout(timer)
+      settle()
+    }
   })
 }
 
-/** The live preview servers this plugin owns. */
+/** How often the reaper looks for work. */
+const REAP_INTERVAL_MS = 30_000
+/**
+ * How long a child that no longer belongs to any key may live. A spawn that is
+ * still waiting for its first page is younger than this, so the reaper cannot
+ * kill a preview that is merely slow to come up.
+ */
+const ORPHAN_GRACE_MS = 60_000
+
+/**
+ * The live preview servers this plugin owns.
+ *
+ * Three maps, because a compiler process is far too expensive to lose track of:
+ *
+ *  - `instances` — the reusable previews, keyed by session × file × color mode,
+ *    which is what `open` serves and what the LRU cap counts;
+ *  - `spawned` — **every** child this manager has started, keyed by token. This is
+ *    the set `close`, the reaper and `dispose` act on, so a child stays reachable
+ *    even after it leaves `instances` for any reason;
+ *  - `spawning` — the spawns in flight, keyed like `instances`. Two tabs opened on
+ *    the same file at the same moment (a remount, a second pane, a reload racing
+ *    the first request) used to see an empty `instances` and each start their own
+ *    `tinymist preview`; the loser of that race was overwritten in the map and
+ *    leaked for the lifetime of the app — a leak of ~600 MB per click. Sharing the
+ *    pending promise makes one file mean one process.
+ */
 export class TinymistPreviews {
   private readonly options: TinymistOptions
   private readonly binary: string
   private readonly instances = new Map<string, PreviewInstance>()
+  private readonly spawned = new Map<string, PreviewInstance>()
+  private readonly spawning = new Map<string, Promise<PreviewInstance>>()
+  /** Last resort: a graceful host exit must not orphan compilers. */
+  private readonly onExit = (): void => {
+    for (const instance of this.spawned.values()) {
+      try {
+        instance.proc.kill('SIGKILL')
+      } catch {
+        /* already gone */
+      }
+    }
+  }
+
   private reaper: NodeJS.Timeout | undefined
+  private disposed = false
 
   constructor(options: TinymistOptions) {
     this.options = options
     this.binary = resolveTinymistPath(options.tinymistPath)
+    process.once('exit', this.onExit)
   }
 
   /** The executable actually spawned, for diagnostics. */
@@ -213,23 +274,22 @@ export class TinymistPreviews {
     return [...this.instances.values()].sort((a, b) => b.lastUsed - a.lastUsed)
   }
 
-  /** The instance a proxy path names. */
+  /** How many children this manager is responsible for, live previews or not. */
+  get processCount(): number {
+    return this.spawned.size
+  }
+
+  /** The instance a proxy path names; a child being retired still answers. */
   byToken(token: string): PreviewInstance | undefined {
-    for (const instance of this.instances.values()) {
-      if (instance.token === token) return instance
-    }
-    return undefined
+    return this.spawned.get(token)
   }
 
   /** Start the idle reaper; the returned callback stops it. */
   startReaper(): () => void {
     if (this.reaper !== undefined) return () => {}
     this.reaper = setInterval(() => {
-      const deadline = Date.now() - this.options.idleTimeoutMs
-      for (const instance of [...this.instances.values()]) {
-        if (instance.lastUsed < deadline) void this.close(instance.token)
-      }
-    }, 60_000)
+      void this.reap()
+    }, REAP_INTERVAL_MS)
     this.reaper.unref?.()
     return () => {
       if (this.reaper !== undefined) clearInterval(this.reaper)
@@ -237,8 +297,40 @@ export class TinymistPreviews {
     }
   }
 
+  /**
+   * One reaping pass, with three jobs:
+   *
+   *  1. a child no key claims any more — closed, evicted, or abandoned by a
+   *     dropped request — is killed, because nothing else can ever reach it;
+   *  2. an active child nobody has touched for the whole idle window is killed;
+   *  3. the total number of children is capped, so a bug can cost this process a
+   *     few hundred megabytes for half a minute, never for the rest of the day.
+   */
+  private async reap(): Promise<void> {
+    if (this.disposed) return
+    const now = Date.now()
+    for (const instance of [...this.spawned.values()]) {
+      const active = this.instances.get(instance.key) === instance
+      if (!active) {
+        if (now - instance.startedAt > ORPHAN_GRACE_MS) await this.stop(instance)
+        continue
+      }
+      if (instance.lastUsed < now - this.options.idleTimeoutMs) await this.stop(instance)
+    }
+    const ceiling = Math.max(2, this.options.maxInstances * 2)
+    while (this.spawned.size > ceiling) {
+      const children = [...this.spawned.values()]
+      const victim =
+        children.filter((child) => this.instances.get(child.key) !== child).sort((a, b) => a.lastUsed - b.lastUsed)[0] ??
+        children.sort((a, b) => a.lastUsed - b.lastUsed)[0]
+      if (victim === undefined) return
+      await this.stop(victim)
+    }
+  }
+
   /** Reuse a live preview of the same file, or start one. */
   async open(request: OpenPreviewRequest): Promise<PreviewInstance> {
+    if (this.disposed) throw new Error('预览管理器已停止')
     const file = resolveInput(request.file, request.cwd)
     const invert = normalizeInvert(request.invert)
     const key = `${request.sessionId ?? ''}\u0000${file}\u0000${invert}`
@@ -248,33 +340,58 @@ export class TinymistPreviews {
       return existing
     }
     if (existing !== undefined) this.instances.delete(key)
-    await this.reapBeyondLimit()
-    const instance = await this.spawn(key, file, invert, request.cwd)
-    instance.lastUsed = Date.now()
-    this.instances.set(key, instance)
-    return instance
+    // Somebody else is already starting this exact preview: share their process
+    // instead of starting a second compiler the map would have to forget. The
+    // promise is registered below without awaiting anything first, because an
+    // `await` before that registration is exactly the window two callers slip
+    // through — and every child spawned in that window is unreachable forever.
+    const inFlight = this.spawning.get(key)
+    if (inFlight !== undefined) return inFlight
+    const started = this.startSpawn(key, file, invert, request.cwd)
+    this.spawning.set(key, started)
+    try {
+      const instance = await started
+      instance.lastUsed = Date.now()
+      this.instances.set(key, instance)
+      return instance
+    } finally {
+      if (this.spawning.get(key) === started) this.spawning.delete(key)
+    }
+  }
+
+  /** Evict down to the cap, then start the child; a thin async body for {@link open}. */
+  private startSpawn(key: string, file: string, invert: InvertColors, cwd: string | undefined): Promise<PreviewInstance> {
+    const run = async (): Promise<PreviewInstance> => {
+      await this.reapBeyondLimit()
+      return this.spawn(key, file, invert, cwd)
+    }
+    return run()
   }
 
   /** Stop one preview by token; unknown or already stopped tokens are a no-op. */
   async close(token: string): Promise<boolean> {
-    let target: PreviewInstance | undefined
-    for (const [key, instance] of this.instances) {
-      if (instance.token === token) {
-        target = instance
-        this.instances.delete(key)
-        break
-      }
-    }
-    if (target === undefined) return false
-    await stopProcess(target)
+    const instance = this.spawned.get(token)
+    if (instance === undefined) return false
+    await this.stop(instance)
     return true
   }
 
-  /** Stop everything; used on plugin disposal. */
+  /** Stop everything and stop listening for new work; used on plugin disposal. */
   async dispose(): Promise<void> {
-    const live = [...this.instances.values()]
+    this.disposed = true
+    process.removeListener('exit', this.onExit)
+    const live = [...this.spawned.values()]
     this.instances.clear()
+    this.spawned.clear()
+    this.spawning.clear()
     await Promise.all(live.map((instance) => stopProcess(instance)))
+  }
+
+  /** Retire one child: out of every map first, then out of the process table. */
+  private async stop(instance: PreviewInstance): Promise<void> {
+    this.spawned.delete(instance.token)
+    if (this.instances.get(instance.key) === instance) this.instances.delete(instance.key)
+    await stopProcess(instance)
   }
 
   private async reapBeyondLimit(): Promise<void> {
@@ -298,6 +415,7 @@ export class TinymistPreviews {
       ...this.options.extraArgs,
       file,
     ]
+    if (this.disposed) throw new Error('预览管理器已停止')
     const proc = spawn(this.binary, args, { stdio: ['ignore', 'pipe', 'pipe'] })
     // Drain both pipes: an unread pipe eventually blocks the child.
     proc.stdout?.on('data', () => {})
@@ -316,18 +434,34 @@ export class TinymistPreviews {
       exited: false,
       proc,
     }
-    proc.once('error', () => { instance.exited = true })
+    // Registered before the readiness poll, so even a spawn that dies on the way
+    // up is reachable by `close`, the reaper and `dispose`.
+    this.spawned.set(instance.token, instance)
+    proc.once('error', () => {
+      // A failed spawn, or a signal the child refused: force it and forget it, so
+      // no live compiler can hide behind `exited`.
+      instance.exited = true
+      this.spawned.delete(instance.token)
+      if (this.instances.get(key) === instance) this.instances.delete(key)
+      try {
+        proc.kill('SIGKILL')
+      } catch {
+        /* already gone */
+      }
+    })
     proc.once('exit', () => {
       instance.exited = true
+      this.spawned.delete(instance.token)
       if (this.instances.get(key) === instance) this.instances.delete(key)
     })
     try {
       await waitForReady(dataPort, this.options.readyTimeoutMs, () => !instance.exited)
+      if (this.disposed) throw new Error('预览管理器已停止')
+      return instance
     } catch (error) {
-      await stopProcess(instance)
+      await this.stop(instance)
       throw error
     }
-    return instance
   }
 }
 

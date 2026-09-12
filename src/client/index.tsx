@@ -647,13 +647,20 @@ export function TypstPreviewTab(props: TypstPreviewProps): ReactElement {
         style={face === 'preview' ? undefined : { display: 'none' }}
       >
           {preview.status === 'ready' && preview.url !== undefined ? (
-            <iframe
-              key={frameNonce}
-              className="dshTypstPreview_frame"
-              data-typst-frame={preview.url}
-              src={`${preview.url}?r=${String(frameNonce)}`}
-              title={file ?? t('mode.preview.aria')}
-            />
+            // One preview document is a whole WebKit document with a compiled
+            // renderer and a live socket; keeping one per open tab is how a GUI
+            // ends up several gigabytes deep. Only the tab the user is looking at
+            // keeps its document mounted — the tinymist process stays alive either
+            // way, so coming back is a page load, not a new compiler.
+            tab.visible === false ? null : (
+              <iframe
+                key={frameNonce}
+                className="dshTypstPreview_frame"
+                data-typst-frame={preview.url}
+                src={`${preview.url}?r=${String(frameNonce)}`}
+                title={file ?? t('mode.preview.aria')}
+              />
+            )
           ) : preview.status === 'error' ? (
             <div className="dshTypstPreview_overlay" data-error="true" data-typst-stage="error">
               <span>

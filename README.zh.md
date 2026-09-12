@@ -11,7 +11,7 @@ English: [README.md](README.md)。
 - **预览**：`tinymist preview` 渲染的页面，走 WebSocket 推送，改文件即重编译。工具栏三个按钮：重新载入、配色（原始 / 跟随系统 / 反色，记在 `localStorage`）、在新标签页打开。
 - **源码**：同一 tab 内切成源码，**语法高亮取自 `tinymist` 自己的语义 token**（标题、关键字、函数、字符串、公式、标签、注释，以及 `*加粗*`／`_斜体_` 标记），带行号、复制，大文件带「加载更多」。配色直接用应用自身的代码块色板（`--shiki-*`），所以 `.typ` 源码与 Markdown 代码块看起来是一套。取不到高亮时——没有 `tinymist`、文件超过体积上限、或 `highlight: false`——退回原生代码渲染器 + 宿主分页读取，与加高亮之前完全一致。
 
-两个面始终挂载，切到源码再切回来**不会**销毁预览进程：后台仍在编译，切回是瞬时的。
+两个面始终挂载，切到源码再切回来**不会**销毁预览进程：后台仍在编译。但预览**文档**只为你正在看的那一个 tab 挂载：一个活的预览页就是一整份 WebKit 文档（带编译好的渲染器和 socket），给每个打开的 tab 都留一份正是浏览器标签页涨到几个 GB 的原因。切回某个 tab 会重新加载它的页面（约 1 秒），而它背后的 `tinymist` 进程从没被销毁，所以并不是从头重编译。
 
 默认预览面来自类型注册的 `priority: 'extension'`（高于随包的纯文本 `fallback` 查看器）。想让 `.typ` 回到原生文本预览，把 `src/client/index.tsx` 里 `typstTabDefinition()` 的 `priority` 改成 `'fallback'`，再从别处显式 `openResource(address, { kind: 'typst-preview' })`。
 
@@ -62,6 +62,18 @@ dsh plugin --profile web add github:Limbo-137/dsh-typst-preview
 
 `extraArgs` 是共用的：既传给 `tinymist preview`，也传给 `tinymist lsp`，所以给文档补字体的 `--font-path` 两个面都生效。
 
+## 内存与进程卫生
+
+一个 `tinymist preview` 要 200–600 MB，所以本插件把每个子进程都当成"必须始终可寻址"的资源：
+
+- **一个文件一个进程**：同一文件的两次并发请求（重新挂载、第二个 panel、刷新撞上首个请求）共享同一次 spawn。没有这一条，竞争的败者会被覆盖出实例表，此后没有任何代码路径能杀掉它。
+- **全部子进程与"可复用集合"分开记账**，`close`、回收器和卸载都作用在这个超集上——所以任何原因离开活动集合的子进程，仍然可以被 token 杀掉。
+- **LRU 上限**（`maxInstances`，默认 4）淘汰即杀，另有一道两倍上限的硬闸兜住漏网。
+- **两道回收**：闲置回收（默认 30 分钟无请求），以及 60 秒后杀掉"已不被任何 key 认领"的子进程——这是浏览器没送达 close 请求时的安全网。
+- **退出钩子**：宿主正常退出时对残留子进程发 SIGKILL，重启不再留孤儿。
+
+`GET /api/typst-preview/status` 同时报 `processes`（全部子进程）与 `instances`（可复用的那些），两者不一致就是泄漏的形状；`scripts/leak-check.mjs` 直接对着真实进程表断言这件事。
+
 ## 设计要点
 
 | 层 | 做什么 |
@@ -86,6 +98,12 @@ node scripts/smoke.mjs
 #   open 起进程 / 页面代理且 WS 地址被重写 / WebSocket 中继收到真实帧 /
 #   重复 open 复用实例 / source 返回文本 + token 游程（含分页窗口与失败回退）/
 #   close 回收 / 跨站请求被拒 —— 19/19
+
+# 宿主半：预览进程池 vs 操作系统进程表
+node scripts/leak-check.mjs
+#   同一文件并发两次 open 共享同一 token 与同一个子进程 / LRU 淘汰真的杀掉了进程 /
+#   从实例表里被移除的子进程仍可 close、仍被计入 / 回收器收走游离子进程 /
+#   dispose 之后一个不剩 —— 13/13
 
 # 浏览器半：按外壳的方式加载构建好的客户端包，用 React 静态渲染真高亮结果
 node scripts/render-check.mjs

@@ -23,7 +23,11 @@ two faces:
   host's paged reader, exactly as it worked before.
 
 Both faces stay mounted, so switching to Source and back does not tear down the preview
-server — it keeps compiling in the background, and switching back is instantaneous.
+server — it keeps compiling in the background. The preview *document* is mounted only for
+the tab you are looking at: one live preview page is a whole WebKit document with a
+compiled renderer and a socket, and keeping one per open tab is how a browser tab reaches
+multiple gigabytes. Returning to a tab reloads its page (~1 s); the `tinymist` process
+behind it was never torn down, so nothing is recompiled from scratch.
 
 `.typ` is claimed through the Sidebar's tab-type registry at `priority: 'extension'`, which
 outranks the built-in plain-text fallback viewer. To send `.typ` back to the native text
@@ -86,6 +90,29 @@ Optional, on the plugin's row in the profile's `cordis.patch.yml` (or a home pat
 `extraArgs` is shared: they are passed to `tinymist preview` and to `tinymist lsp` alike, so a
 `--font-path` for a document that needs it applies to both faces.
 
+## Memory and process hygiene
+
+A `tinymist preview` costs 200–600 MB, so this plugin treats every child as a resource that
+must stay reachable:
+
+- **One process per file.** Two requests for the same file at the same moment (a remount, a
+  second pane, a reload racing the first request) share one spawn. Without that, the loser
+  of the race is overwritten in the instance map and no code path can ever kill it again.
+- **Every child is tracked separately from the reusable set**, and `close`, the reaper and
+  shutdown act on that superset — so a child that leaves the live set for any reason is still
+  killable by token.
+- **LRU cap** (`maxInstances`, default 4) evicts by killing, and a hard ceiling of twice that
+  catches anything the cap misses.
+- **Two reapers**: an idle one (default 30 min of no requests) and an orphan one that kills,
+  after 60 s, any child no key claims any more — the safety net for a close request the
+  browser never delivered.
+- **Exit hook**: a graceful host exit SIGKILLs whatever is still running, so a restart does
+  not leave orphans behind.
+
+`GET /api/typst-preview/status` reports both `processes` (every child) and `instances` (the
+reusable ones); the two disagreeing is the shape of a leak. `scripts/leak-check.mjs`
+asserts exactly that against the real process table.
+
 ## How it works
 
 | Layer | Responsibility |
@@ -115,6 +142,13 @@ node scripts/smoke.mjs
 #   the relay delivers real frames, a second open reuses the instance, the source
 #   route answers with text plus token runs (and a page window, and a refusal),
 #   close reaps it, and a cross-site request is refused — 19/19.
+
+# Host half: the preview fleet against the OS process table
+node scripts/leak-check.mjs
+#   two simultaneous opens of one file share a token and one child; the LRU cap
+#   kills what it evicts; a child removed from the instance map is still closable
+#   and still counted; the reaper collects a stray; dispose leaves nothing alive
+#   — 13/13.
 
 # Browser half: the built client bundle loaded the way the shell loads it, rendered
 # with React's static renderer against a page the host really highlighted

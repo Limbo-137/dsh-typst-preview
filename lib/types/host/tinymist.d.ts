@@ -67,27 +67,64 @@ export declare function resolveInput(file: string, cwd: string | undefined): str
 export declare function resolveRoot(file: string, cwd: string | undefined): string;
 /** Resolve the executable once: PATH first, then the usual install locations. */
 export declare function resolveTinymistPath(preferred: string): string;
-/** The live preview servers this plugin owns. */
+/**
+ * The live preview servers this plugin owns.
+ *
+ * Three maps, because a compiler process is far too expensive to lose track of:
+ *
+ *  - `instances` — the reusable previews, keyed by session × file × color mode,
+ *    which is what `open` serves and what the LRU cap counts;
+ *  - `spawned` — **every** child this manager has started, keyed by token. This is
+ *    the set `close`, the reaper and `dispose` act on, so a child stays reachable
+ *    even after it leaves `instances` for any reason;
+ *  - `spawning` — the spawns in flight, keyed like `instances`. Two tabs opened on
+ *    the same file at the same moment (a remount, a second pane, a reload racing
+ *    the first request) used to see an empty `instances` and each start their own
+ *    `tinymist preview`; the loser of that race was overwritten in the map and
+ *    leaked for the lifetime of the app — a leak of ~600 MB per click. Sharing the
+ *    pending promise makes one file mean one process.
+ */
 export declare class TinymistPreviews {
     private readonly options;
     private readonly binary;
     private readonly instances;
+    private readonly spawned;
+    private readonly spawning;
+    /** Last resort: a graceful host exit must not orphan compilers. */
+    private readonly onExit;
     private reaper;
+    private disposed;
     constructor(options: TinymistOptions);
     /** The executable actually spawned, for diagnostics. */
     get executable(): string;
     /** Every live instance, newest use first. */
     list(): readonly PreviewInstance[];
-    /** The instance a proxy path names. */
+    /** How many children this manager is responsible for, live previews or not. */
+    get processCount(): number;
+    /** The instance a proxy path names; a child being retired still answers. */
     byToken(token: string): PreviewInstance | undefined;
     /** Start the idle reaper; the returned callback stops it. */
     startReaper(): () => void;
+    /**
+     * One reaping pass, with three jobs:
+     *
+     *  1. a child no key claims any more — closed, evicted, or abandoned by a
+     *     dropped request — is killed, because nothing else can ever reach it;
+     *  2. an active child nobody has touched for the whole idle window is killed;
+     *  3. the total number of children is capped, so a bug can cost this process a
+     *     few hundred megabytes for half a minute, never for the rest of the day.
+     */
+    private reap;
     /** Reuse a live preview of the same file, or start one. */
     open(request: OpenPreviewRequest): Promise<PreviewInstance>;
+    /** Evict down to the cap, then start the child; a thin async body for {@link open}. */
+    private startSpawn;
     /** Stop one preview by token; unknown or already stopped tokens are a no-op. */
     close(token: string): Promise<boolean>;
-    /** Stop everything; used on plugin disposal. */
+    /** Stop everything and stop listening for new work; used on plugin disposal. */
     dispose(): Promise<void>;
+    /** Retire one child: out of every map first, then out of the process table. */
+    private stop;
     private reapBeyondLimit;
     private spawn;
 }
