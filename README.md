@@ -44,6 +44,35 @@ viewer instead, change `priority` in `typstTabDefinition()` (`src/client/index.t
 - The predecessor of this plugin (`~/.dsh/plugins/dsh-typst-preview`, mounted onto the
   `dsh-better-sidebar` file viewer) is not compatible with 0.1.5 and is superseded by this one.
 
+## Permissions, dependencies and failure bounds
+
+Stated plainly, because this plugin drives an external compiler and DSH STORE (rightly) refuses to
+guess: it is a **high-capability** plugin, so the store lists it as `user-reviewed` — the market
+shows you what changed and you confirm it — rather than auto-approving it.
+
+| Capability | Exact bounds |
+|---|---|
+| **Files** | Reads the `.typ` files whose tabs you opened, and nothing else of yours. Never writes: the source face is read-only, and only the agent's own tools edit your files. |
+| **Network** | No outbound traffic, no telemetry. Every request is either same-origin (`/api/typst-preview/*` on the app's own host) or loopback to a `tinymist` process this plugin started. |
+| **Commands** | Spawns the local `tinymist` binary (`preview`, and `lsp` for source highlighting) with an explicit argv; no shell, no remote installs, no other executables. `tinymistPath` overrides which binary. |
+| **Credentials** | None. No tokens, keys or cookies are read; the only environment use is resolving the `tinymist` path and the user's home directory. |
+| **Lifecycle** | No `preinstall`/`install`/`postinstall`/`prepare`. Nothing runs at install or update time, which is also why `lib/` is committed. |
+
+**External dependency**: [`tinymist`](https://github.com/Myriad-Dreamin/tinymist) must be on `PATH`
+(or given via `tinymistPath`); verified against `v0.15.0-rc1`. Typst's default font is a Latin one,
+so a document that renders Chinese needs its own font stack — see the section below.
+
+**When things are missing or fail**: no `tinymist` means the Preview face shows the error and the
+Source face falls back to plain text; a file over `highlightMaxBytes` (4 MiB) loses highlighting but
+still reads; a crashed or killed preview is reaped and started again on demand; the fleet is capped
+(`maxInstances`, plus a hard ceiling of twice that) and both idle and orphaned children are
+reaped, so a lost child cannot outlive the tab that started it.
+
+**Declared compatibility**: Node `>=22`, DSH `>=0.1.5-rc.1 <0.2.0` (per-release record:
+`0.1.5-rc.1: compatible`), profile `web`. The install/start/uninstall/rollback transcript on a
+disposable profile is in [`docs/profile-evidence.md`](docs/profile-evidence.md); other DSH releases
+stay `unknown` there until the same run is done on them.
+
 ## Install
 
 ```sh

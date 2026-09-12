@@ -70,6 +70,7 @@
     "lib/**/*.js",
     "lib/**/*.d.ts",
     "src",
+    "docs",
     "cordis.patch.yml",
     "screenshots.json"
   ],

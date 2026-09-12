@@ -21,6 +21,24 @@ English: [README.md](README.md)。
 - **`tinymist`**：先查 `PATH`，再查 `~/.local/bin`、`/opt/homebrew/bin`、`/usr/local/bin`、`~/.cargo/bin`；用 `tinymistPath` 可覆盖。
 - 本插件的前身（`~/.dsh/plugins/dsh-typst-preview`，挂在 `dsh-better-sidebar` 的文件查看器上）与 0.1.5 不兼容，已被本插件取代。
 
+## 权限、依赖与失败边界
+
+直说，因为这个插件要驱动外部编译器，而 DSH STORE（合理地）拒绝替作者猜：它是**高权限**插件，所以在商城里是 `user-reviewed`——由商城把变更摆给你看、你逐次确认——而不是自动放行。
+
+| 能力 | 确切边界 |
+|---|---|
+| **文件** | 只读你打开过的那些 `.typ`，不碰其它。**从不写入**：源码面是只读的，改文件只可能来自 agent 自己的工具。 |
+| **网络** | 无对外流量、无遥测。每个请求要么同源（应用自己主机上的 `/api/typst-preview/*`），要么是回环到本插件启动的 `tinymist` 进程。 |
+| **命令** | 只 spawn 本机 `tinymist`（`preview`，以及源码高亮用的 `lsp`），argv 显式给出；不经 shell、不远程安装、不调用其它可执行文件。`tinymistPath` 可换二进制。 |
+| **凭据** | 无。不读任何 token/key/cookie；唯一的"环境"用途是定位 `tinymist` 与用户家目录。 |
+| **生命周期脚本** | 没有 `preinstall`/`install`/`postinstall`/`prepare`，安装与更新时不执行任何代码（这也是 `lib/` 入库的原因）。 |
+
+**外部依赖**：[`tinymist`](https://github.com/Myriad-Dreamin/tinymist) 需在 `PATH`（或用 `tinymistPath` 指定），实测版本 `v0.15.0-rc1`。Typst 默认字体是拉丁字体，中文文档需自带字体栈，见下一节。
+
+**缺东西或出错时**：没有 `tinymist` → 预览面报错、源码面退回纯文本；文件超过 `highlightMaxBytes`（4 MiB）→ 不高亮但仍可读；预览进程崩溃/被杀 → 回收器清理，下次按需重启；进程数有上限（`maxInstances`，外加两倍硬闸），闲置与游离的子进程都会被回收，所以丢掉的子进程活不过启动它的那个 tab。
+
+**声明的兼容范围**：Node `>=22`、DSH `>=0.1.5-rc.1 <0.2.0`（逐版记录：`0.1.5-rc.1: compatible`）、profile `web`。一次性 Profile 上的安装/启动/卸载/回滚实测记录见 [`docs/profile-evidence.md`](docs/profile-evidence.md)；其它 DSH 版本在做同样的实测之前保持 `unknown`。
+
 ## 安装
 
 ```sh
