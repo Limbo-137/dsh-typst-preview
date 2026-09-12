@@ -20,6 +20,15 @@
     "engines": {
       "dsh": ">=0.1.5-rc.1"
     },
+    "compatibility": {
+      "dsh": ">=0.1.5-rc.1 <0.2.0",
+      "dshReleases": {
+        "0.1.5-rc.1": "compatible"
+      },
+      "profiles": [
+        "web"
+      ]
+    },
     "bundle": {
       "patch": "./cordis.patch.yml"
     },
@@ -82,5 +91,8 @@
     "url": "https://github.com/Limbo-137/dsh-typst-preview/issues"
   },
   "author": "Limbo-137",
-  "license": "MIT"
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  }
 }
