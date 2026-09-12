@@ -6,6 +6,7 @@ node_modules/
 
 # Scratch directories used by the verification scripts.
 .tmp-smoke/
+.tmp-render/
 .tmp-dsh-home/
 cdp-*/
 

@@ -4,8 +4,12 @@
  *
  * The tab is a two-face surface with its own switch, the way the sidebar's
  * Markdown preview reads: **预览** is a live `tinymist preview` page in an
- * iframe, **源码** is the file's own text with the shared code renderer. The
- * type claims `*.typ` in the `extension` band, so a click on a `.typ` file in
+ * iframe, **源码** is the file's own text. The source face is highlighted from
+ * tinymist's semantic tokens through `/api/typst-preview/source` — the shared
+ * code renderer has no Typst grammar, so it only ever painted flat text — and
+ * falls back to that renderer over the host's paged reader whenever highlighting
+ * is unavailable (no tinymist, a file past the size cap, `highlight: false`).
+ * The type claims `*.typ` in the `extension` band, so a click on a `.typ` file in
  * the Files tree lands here instead of in the plain-text fallback; the source
  * face is one button away, and the plain-text viewer stays reachable through
  * `openResource(address, { kind: 'text' })` for anything this surface cannot do.
@@ -18,9 +22,10 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactElement, ReactNode } from 'react'
-import { CodeBlock } from '@deepseek-ai/dsh-client-ui-primitives'
+import { CodeBlock, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 import { basenameOf, parseFileAddress } from './address'
 import { acquirePreview, releaseAllPreviews, releasePreview, type InvertMode } from './preview-client'
+import { fetchSourcePage, type HighlightedSourcePage } from './source-client'
 
 /* -------------------------------------------------------------------------- *
  * The native right-Sidebar contracts this plugin consumes (mirrors of
@@ -160,6 +165,26 @@ const CSS = `
 .dshTypstPreview_source{flex:auto;min-height:0;overflow:auto;font-family:var(--dsw-font-mono,ui-monospace,monospace);font-size:12px;line-height:1.6;background:var(--dsw-alias-bg-base)}
 .dshTypstPreview_plain{margin:0;padding:8px 10px;white-space:pre;font:inherit}
 .dshTypstPreview_more{display:flex;justify-content:center;padding:8px}
+/* Highlighted source: one row per line, painted with the theme's own shiki
+   token sheet — the same colors the app's code blocks use, in both themes. */
+.dshTypstPreview_code{padding:8px 0;background:var(--shiki-background,var(--dsw-alias-markdown-code-block));color:var(--shiki-foreground,var(--dsw-alias-label-primary))}
+.dshTypstPreview_row{display:flex;white-space:pre}
+.dshTypstPreview_row:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.dshTypstPreview_ln{flex:none;width:3.4em;padding:0 10px 0 12px;text-align:right;color:var(--dsw-alias-label-tertiary);user-select:none}
+.dshTypstPreview_line{flex:auto;min-width:0;padding-right:12px}
+.dshTypstPreview_t-comment{color:var(--shiki-token-comment)}
+.dshTypstPreview_t-string{color:var(--shiki-token-string)}
+.dshTypstPreview_t-raw{color:var(--shiki-token-string-expression)}
+.dshTypstPreview_t-keyword{color:var(--shiki-token-keyword)}
+.dshTypstPreview_t-function{color:var(--shiki-token-function)}
+.dshTypstPreview_t-number{color:var(--shiki-token-constant)}
+.dshTypstPreview_t-variable{color:var(--shiki-token-parameter)}
+.dshTypstPreview_t-punctuation{color:var(--shiki-token-punctuation)}
+.dshTypstPreview_t-link{color:var(--shiki-token-link)}
+.dshTypstPreview_t-error{color:var(--dsw-alias-label-error,#c0392b)}
+.dshTypstPreview_s1{font-weight:600}
+.dshTypstPreview_s2{font-style:italic}
+.dshTypstPreview_s3{font-weight:600;font-style:italic}
 `
 
 function installStyles(): void {
@@ -201,8 +226,16 @@ function IconExternal(): ReactElement {
   )
 }
 
-function IconInvert(): ReactElement {
+function IconCopy(): ReactElement {
   return (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <rect x="5.6" y="5.6" width="7.8" height="7.8" rx="1.6" stroke="currentColor" strokeWidth="1.2" />
+      <path d="M10.4 3.2H4.2c-.9 0-1.6.7-1.6 1.6v6.2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+function IconInvert(): ReactElement {  return (
     <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
       <circle cx="8" cy="8" r="5.3" stroke="currentColor" strokeWidth="1.2" />
       <path d="M8 2.7a5.3 5.3 0 0 1 0 10.6z" fill="currentColor" />
@@ -288,15 +321,37 @@ interface PreviewState {
   readonly error?: string
 }
 
+/** One loaded page of the file: its text, and its token runs when highlighted. */
+interface SourceChunk {
+  readonly offset: number
+  readonly text: string
+  readonly spans?: readonly (readonly number[])[]
+}
+
 interface SourceState {
   readonly status: 'idle' | 'loading' | 'ready' | 'error'
-  readonly pages: readonly string[]
+  readonly chunks: readonly SourceChunk[]
+  /** Token class names, shared by every chunk of the file. */
+  readonly classes?: readonly string[]
+  /** True once the host answered with a highlighted page. */
+  readonly highlighted: boolean
+  /** Why highlighting is not in use, for the diagnostic surface. */
+  readonly fallback?: string
+  /** True while the paged plain-text reader is the one being asked. */
+  readonly paged: boolean
   readonly nextOffset: number
   readonly eof: boolean
   readonly error?: string
 }
 
-const EMPTY_SOURCE: SourceState = { status: 'idle', pages: [], nextOffset: 1, eof: false }
+const EMPTY_SOURCE: SourceState = {
+  status: 'idle',
+  chunks: [],
+  highlighted: false,
+  paged: false,
+  nextOffset: 1,
+  eof: false,
+}
 
 const INVERT_STORAGE_KEY = 'dsh-typst-preview:invert'
 const INVERT_CYCLE: readonly InvertMode[] = ['never', 'auto', 'always']
@@ -332,6 +387,7 @@ export function TypstPreviewTab(props: TypstPreviewProps): ReactElement {
   const [frameNonce, setFrameNonce] = useState(0)
   const [preview, setPreview] = useState<PreviewState>({ status: 'starting' })
   const [source, setSource] = useState<SourceState>(EMPTY_SOURCE)
+  const [copied, setCopied] = useState(false)
 
   const absolutePath = meta.value?.absolutePath
   const file = absolutePath ?? address?.path
@@ -355,7 +411,6 @@ export function TypstPreviewTab(props: TypstPreviewProps): ReactElement {
     source,
     hasRead: typeof read === 'function',
   }
-
   // The preview stays acquired while the tab lives, whichever face is showing:
   // switching to the source must not throw away a running tinymist (and the
   // preview keeps recompiling behind the source face, the way an editor's
@@ -378,22 +433,69 @@ export function TypstPreviewTab(props: TypstPreviewProps): ReactElement {
     }
   }, [file, key, cwd, sessionId, invert])
 
-  // Source face: the file's text, paged through the host's own reader.
+  // Source face: the highlighted host reader when it can, the paged plain-text
+  // reader when it cannot. The first page is fetched when the face appears, and
+  // a failing/slow preview never blocks it.
   useEffect(() => {
     if (face !== 'source' || address === undefined || source.status !== 'idle') return
-    loadSource(address.sessionId, address.path, 1)
+    loadSource(address.sessionId, address.path, 1, false)
     // eslint-disable-next-line react-hooks/exhaustive-deps -- loadSource is stable per render inputs
   }, [face, address?.sessionId, address?.path, source.status])
 
-  function loadSource(owner: string, path: string, offset: number): void {
-    const signal = tab.signal
-    setSource((previous) => ({ ...previous, status: 'loading', error: undefined }))
+  /** One highlighted page, or the switch to the paged reader on refusal. */
+  function loadHighlighted(owner: string, path: string, offset: number, signal: AbortSignal): void {
+    const target = file ?? path
+    void fetchSourcePage({ file: target, cwd, offset }, signal)
+      .then((result) => {
+        if (signal.aborted) return
+        if (!result.ok) {
+          // Not an error the user has to see: the source face has always had a
+          // plain-text reader, and it is what a missing tinymist or an oversized
+          // file lands on.
+          setSource((previous) => ({ ...previous, fallback: result.error, paged: false }))
+          loadPaged(owner, path, offset, signal)
+          return
+        }
+        const page: HighlightedSourcePage = result.page
+        setSource((previous) => ({
+          status: 'ready',
+          chunks:
+            offset <= 1
+              ? [{ offset: page.offset, text: page.text, spans: page.spans }]
+              : [...previous.chunks, { offset: page.offset, text: page.text, spans: page.spans }],
+          classes: page.classes,
+          highlighted: true,
+          fallback: undefined,
+          paged: false,
+          nextOffset: page.nextOffset,
+          eof: page.eof,
+        }))
+      })
+      .catch((error: unknown) => {
+        if (signal.aborted) return
+        setSource((previous) => ({
+          ...previous,
+          status: 'error',
+          fallback: error instanceof Error ? error.message : String(error),
+          error: error instanceof Error ? error.message : String(error),
+        }))
+      })
+  }
+
+  /** One page from the host's plain-text reader; the pre-highlighting path. */
+  function loadPaged(owner: string, path: string, offset: number, signal: AbortSignal): void {
+    setSource((previous) => ({ ...previous, status: 'loading', paged: true, error: undefined }))
     void read(owner, path, offset, signal)
       .then((page) => {
         if (signal.aborted) return
         setSource((previous) => ({
           status: 'ready',
-          pages: offset <= 1 ? [page.text] : [...previous.pages, page.text],
+          chunks:
+            offset <= 1 ? [{ offset, text: page.text }] : [...previous.chunks, { offset, text: page.text }],
+          classes: undefined,
+          highlighted: false,
+          fallback: previous.fallback,
+          paged: true,
           nextOffset: offset + Math.max(page.lines, 0),
           eof: page.eof,
         }))
@@ -408,7 +510,20 @@ export function TypstPreviewTab(props: TypstPreviewProps): ReactElement {
       })
   }
 
+  /** Load one page of the source face, highlighted when the host can do it. */
+  function loadSource(owner: string, path: string, offset: number, paged: boolean): void {
+    const signal = tab.signal
+    if (paged) {
+      loadPaged(owner, path, offset, signal)
+      return
+    }
+    setSource((previous) => ({ ...previous, status: 'loading', error: undefined }))
+    loadHighlighted(owner, path, offset, signal)
+  }
+
   const invertLabel = t(`state.invert.${invert}`)
+  const sourceText = useMemo(() => source.chunks.map((chunk) => chunk.text).join('\n'), [source.chunks])
+  const hasText = sourceText !== ''
 
   function cycleInvert(): void {
     const next = INVERT_CYCLE[(INVERT_CYCLE.indexOf(invert) + 1) % INVERT_CYCLE.length] ?? 'never'
@@ -460,6 +575,24 @@ export function TypstPreviewTab(props: TypstPreviewProps): ReactElement {
     )
   } else {
     tools.push(
+      <button
+        key="copy"
+        type="button"
+        className="dshTypstPreview_tool"
+        title={copied ? t('code.copied') : t('code.copy')}
+        aria-label={copied ? t('code.copied') : t('code.copy')}
+        data-typst-tool="copy"
+        disabled={!hasText}
+        onClick={() => {
+          void copyText(sourceText).then((done) => {
+            if (!done) return
+            setCopied(true)
+            globalThis.setTimeout(() => setCopied(false), 1200)
+          })
+        }}
+      >
+        <IconCopy />
+      </button>,
       <button
         key="reread"
         type="button"
@@ -561,13 +694,17 @@ export function TypstPreviewTab(props: TypstPreviewProps): ReactElement {
                 {t('state.retry')}
               </button>
             </div>
-          ) : source.pages.length === 0 ? (
+          ) : source.chunks.length === 0 ? (
             <div className="dshTypstPreview_overlay">
               <span>{t('state.reading')}</span>
             </div>
           ) : (
             <>
-              <SourceText text={source.pages.join('\n')} copyLabel={t('code.copy')} copiedLabel={t('code.copied')} />
+              {source.highlighted ? (
+                <HighlightedSource chunks={source.chunks} classes={source.classes} />
+              ) : (
+                <SourceText text={sourceText} copyLabel={t('code.copy')} copiedLabel={t('code.copied')} />
+              )}
               {!source.eof && (
                 <div className="dshTypstPreview_more">
                   <button
@@ -576,7 +713,9 @@ export function TypstPreviewTab(props: TypstPreviewProps): ReactElement {
                     data-typst-tool="more"
                     disabled={source.status === 'loading'}
                     onClick={() => {
-                      if (address !== undefined) loadSource(address.sessionId, address.path, source.nextOffset)
+                      if (address !== undefined) {
+                        loadSource(address.sessionId, address.path, source.nextOffset, source.paged)
+                      }
                     }}
                   >
                     {t('state.loadMore')}
@@ -597,6 +736,87 @@ function SourceText(props: { text: string; copyLabel: string; copiedLabel: strin
     return <CodeBlock code={text} lang="typst" lineNumbers copyLabel={copyLabel} copiedLabel={copiedLabel} />
   }
   return <pre className="dshTypstPreview_plain">{text}</pre>
+}
+
+/**
+ * The highlighted source: one row per line, one span per token run.
+ *
+ * Runs are `[start, end, classIndex, styleBits, …]`, merged by the host, so the
+ * gaps between them are exactly the plain text — pushing those as bare strings is
+ * what keeps a page of Typst to a few thousand nodes.
+ *
+ * Exported for `scripts/render-check.mjs`, which renders a page the host really
+ * highlighted and asserts the markup, since the browser half has no other test
+ * that does not need a GUI.
+ */
+export function HighlightedSource(props: {
+  chunks: readonly SourceChunk[]
+  classes: readonly string[] | undefined
+}): ReactElement {
+  const { chunks, classes } = props
+  const names = classes ?? []
+  const rows: ReactElement[] = []
+  for (const chunk of chunks) {
+    const lines = chunk.text.split('\n')
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index] ?? ''
+      rows.push(
+        <div className="dshTypstPreview_row" key={`${String(chunk.offset)}:${String(index)}`}>
+          <span className="dshTypstPreview_ln">{chunk.offset + index}</span>
+          <span className="dshTypstPreview_line">{paint(line, chunk.spans?.[index], names)}</span>
+        </div>,
+      )
+    }
+  }
+  return (
+    <div className="dshTypstPreview_code" data-typst-code="highlighted">
+      {rows}
+    </div>
+  )
+}
+
+/** One line's text, cut into painted runs with the plain gaps between them. */
+function paint(line: string, runs: readonly number[] | undefined, classes: readonly string[]): ReactNode[] {
+  if (runs === undefined || runs.length === 0) return [line]
+  const out: ReactNode[] = []
+  let cursor = 0
+  for (let i = 0; i + 3 < runs.length; i += 4) {
+    const start = Math.max(0, Math.min(line.length, runs[i] ?? 0))
+    const end = Math.max(start, Math.min(line.length, runs[i + 1] ?? 0))
+    const name = classes[runs[i + 2] ?? -1]
+    const style = runs[i + 3] ?? 0
+    if (start > cursor) out.push(line.slice(cursor, start))
+    if (end > start && name !== undefined) {
+      out.push(
+        <span
+          key={`t${String(i)}`}
+          className={`dshTypstPreview_t-${name}${style === 0 ? '' : ` dshTypstPreview_s${String(style)}`}`}
+        >
+          {line.slice(start, end)}
+        </span>,
+      )
+    }
+    cursor = Math.max(cursor, end)
+  }
+  if (cursor < line.length) out.push(line.slice(cursor))
+  return out
+}
+
+/** Copy text through the shell's clipboard helper, with a plain fallback. */
+async function copyText(text: string): Promise<boolean> {
+  if (typeof writeClipboard === 'function') {
+    try {
+      return await writeClipboard(text)
+    } catch {
+      /* fall through to the platform clipboard */
+    }
+  }
+  try {
+    await globalThis.navigator?.clipboard?.writeText(text)
+    return true
+  } catch {
+    return false
+  }
 }
 
 /* -------------------------------------------------------------------------- *

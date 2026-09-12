@@ -8,6 +8,9 @@
  *                   the same-origin page path plus the upgrade path, and claim
  *                   the upgrade route that instance's socket needs.
  *  - `POST close` — stop it and release both routes.
+ *  - `POST source`— one page of the file's text with the token runs that paint
+ *                   it, decoded from tinymist's own semantic tokens, so the
+ *                   source face is not flat text.
  *  - `GET  status`— what is running, for diagnostics.
  *  - `GET  p/<token>/…` — the page and everything it asks for, forwarded to the
  *                   instance's data plane; the page's one absolute WebSocket
@@ -25,6 +28,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Duplex } from 'node:stream'
 import { DEFAULT_OPTIONS, TinymistPreviews, type PreviewInstance, type TinymistOptions } from './host/tinymist'
+import { DEFAULT_HIGHLIGHT_OPTIONS, TypstHighlighter, type HighlightOptions } from './host/highlight'
 import { patchPreviewHtml, proxyHttp, proxyWebSocket } from './host/proxy'
 
 /** Required host services. */
@@ -63,6 +67,16 @@ export interface TypstPreviewConfig {
   readonly maxInstances?: number
   readonly readyTimeoutMs?: number
   readonly idleTimeoutMs?: number
+  /** Whether the source face is highlighted; off leaves it to the paged reader. */
+  readonly highlight?: boolean
+  /** Lines per highlighted page; the browser half sends its own default too. */
+  readonly highlightLines?: number
+  /** Files above this size fall back to plain text. */
+  readonly highlightMaxBytes?: number
+  /** How long an unused highlighting language server survives. */
+  readonly highlightIdleTimeoutMs?: number
+  /** Language servers kept at once, one per project root. */
+  readonly highlightMaxServers?: number
 }
 
 const API = '/api/typst-preview'
@@ -79,6 +93,28 @@ function optionsOf(config: TypstPreviewConfig | undefined): TinymistOptions {
     readyTimeoutMs: config?.readyTimeoutMs ?? DEFAULT_OPTIONS.readyTimeoutMs,
     idleTimeoutMs: config?.idleTimeoutMs ?? DEFAULT_OPTIONS.idleTimeoutMs,
   }
+}
+
+/** Merge declared config over the highlighting defaults. */
+function highlightOptionsOf(config: TypstPreviewConfig | undefined, base: TinymistOptions): HighlightOptions {
+  return {
+    tinymistPath: base.tinymistPath,
+    extraArgs: base.extraArgs,
+    maxServers: positive(config?.highlightMaxServers, DEFAULT_HIGHLIGHT_OPTIONS.maxServers),
+    requestTimeoutMs: DEFAULT_HIGHLIGHT_OPTIONS.requestTimeoutMs,
+    idleTimeoutMs: positive(config?.highlightIdleTimeoutMs, DEFAULT_HIGHLIGHT_OPTIONS.idleTimeoutMs),
+    maxFileBytes: positive(config?.highlightMaxBytes, DEFAULT_HIGHLIGHT_OPTIONS.maxFileBytes),
+  }
+}
+
+/** A declared positive number, else the default. */
+function positive(value: number | undefined, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : fallback
+}
+
+/** A declared positive integer, else the default. */
+function pageLines(value: number | undefined): number {
+  return Math.max(1, Math.floor(positive(value, 800)))
 }
 
 function writeJson(res: ServerResponse, status: number, body: unknown): void {
@@ -128,6 +164,12 @@ function stringField(body: Record<string, unknown>, key: string): string | undef
   return typeof value === 'string' && value.trim() !== '' ? value : undefined
 }
 
+/** A finite numeric body field, or `undefined` when it is absent or unusable. */
+function numberField(body: Record<string, unknown>, key: string): number | undefined {
+  const value = body[key]
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
 /** The instance a `/p/<token>/…` or `/ws/<token>` path names. */
 function tokenOf(url: string | undefined, prefix: string): string | undefined {
   if (url === undefined) return undefined
@@ -151,7 +193,11 @@ function upstreamPathOf(url: string | undefined, token: string): string {
 export function apply(ctx: Context, config?: TypstPreviewConfig): void {
   const webServer = ctx.webServer
   if (webServer === undefined) throw new Error('dsh-typst-preview: webServer service is required')
-  const previews = new TinymistPreviews(optionsOf(config))
+  const options = optionsOf(config)
+  const previews = new TinymistPreviews(options)
+  const highlightEnabled = config?.highlight !== false
+  const highlighter = highlightEnabled ? new TypstHighlighter(highlightOptionsOf(config, options)) : undefined
+  const lineLimit = pageLines(config?.highlightLines)
   /** Upgrade route per live token; the socket owner is the instance itself. */
   const upgrades = new Map<string, () => void>()
 
@@ -278,6 +324,7 @@ export function apply(ctx: Context, config?: TypstPreviewConfig): void {
         executable: previews.executable,
         pagePrefix: PAGE_PREFIX,
         wsPrefix: WS_PREFIX,
+        highlight: { enabled: highlightEnabled, lines: lineLimit, servers: highlighter?.list() ?? [] },
         instances: previews.list().map((instance) => ({
           token: instance.token,
           file: instance.file,
@@ -290,6 +337,50 @@ export function apply(ctx: Context, config?: TypstPreviewConfig): void {
           exited: instance.exited,
         })),
       })
+    },
+  }
+
+  const sourceRoute: WebRoute = {
+    kind: 'exact',
+    path: `${API}/source`,
+    handler: async (req, res) => {
+      if (req.method !== 'POST') {
+        writeJson(res, 405, { ok: false, error: 'method not allowed' })
+        return
+      }
+      if (!sameOrigin(req)) {
+        writeJson(res, 403, { ok: false, error: 'cross-origin request refused' })
+        return
+      }
+      if (highlighter === undefined) {
+        writeJson(res, 200, { ok: false, error: 'highlighting is disabled' })
+        return
+      }
+      let body: Record<string, unknown>
+      try {
+        body = await readBody(req)
+      } catch (error) {
+        writeJson(res, 400, { ok: false, error: error instanceof Error ? error.message : 'bad request' })
+        return
+      }
+      const file = stringField(body, 'file')
+      if (file === undefined) {
+        writeJson(res, 400, { ok: false, error: 'file is required' })
+        return
+      }
+      try {
+        const page = await highlighter.page({
+          file,
+          cwd: stringField(body, 'cwd'),
+          offset: numberField(body, 'offset') ?? 1,
+          limit: numberField(body, 'limit') ?? lineLimit,
+        })
+        writeJson(res, 200, { ok: true, ...page })
+      } catch (error) {
+        // Not an error the browser half reports: it falls back to the paged
+        // reader, which is what the source face did before highlighting existed.
+        writeJson(res, 200, { ok: false, error: error instanceof Error ? error.message : 'highlight failed' })
+      }
     },
   }
 
@@ -316,15 +407,19 @@ export function apply(ctx: Context, config?: TypstPreviewConfig): void {
     webServer.register(openRoute),
     webServer.register(closeRoute),
     webServer.register(statusRoute),
+    webServer.register(sourceRoute),
     webServer.register(pageRoute),
   ]
   const stopReaper = previews.startReaper()
+  const stopHighlightReaper = highlighter?.startReaper()
 
   ctx.effect(() => () => {
     stopReaper()
+    stopHighlightReaper?.()
     for (const dispose of disposers) dispose()
     for (const dispose of [...upgrades.values()]) dispose()
     upgrades.clear()
+    void highlighter?.dispose()
     void previews.dispose()
   }, 'typst-preview: routes, upgrade claims and preview processes')
 }

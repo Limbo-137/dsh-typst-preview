@@ -82,7 +82,7 @@ export interface PreviewInstance {
 }
 
 /** Absolute path of the input, refusing anything that is not an existing file. */
-function resolveInput(file: string, cwd: string | undefined): string {
+export function resolveInput(file: string, cwd: string | undefined): string {
   const trimmed = file.trim()
   if (trimmed === '') throw new Error('file required')
   const absolute = isAbsolute(trimmed) ? resolve(trimmed) : resolve(cwd ?? process.cwd(), trimmed)

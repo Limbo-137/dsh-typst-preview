@@ -8,6 +8,9 @@
  *                   the same-origin page path plus the upgrade path, and claim
  *                   the upgrade route that instance's socket needs.
  *  - `POST close` — stop it and release both routes.
+ *  - `POST source`— one page of the file's text with the token runs that paint
+ *                   it, decoded from tinymist's own semantic tokens, so the
+ *                   source face is not flat text.
  *  - `GET  status`— what is running, for diagnostics.
  *  - `GET  p/<token>/…` — the page and everything it asks for, forwarded to the
  *                   instance's data plane; the page's one absolute WebSocket
@@ -54,6 +57,16 @@ export interface TypstPreviewConfig {
     readonly maxInstances?: number;
     readonly readyTimeoutMs?: number;
     readonly idleTimeoutMs?: number;
+    /** Whether the source face is highlighted; off leaves it to the paged reader. */
+    readonly highlight?: boolean;
+    /** Lines per highlighted page; the browser half sends its own default too. */
+    readonly highlightLines?: number;
+    /** Files above this size fall back to plain text. */
+    readonly highlightMaxBytes?: number;
+    /** How long an unused highlighting language server survives. */
+    readonly highlightIdleTimeoutMs?: number;
+    /** Language servers kept at once, one per project root. */
+    readonly highlightMaxServers?: number;
 }
 /** Plugin body: own the fleet, claim the routes, release both on unload. */
 export declare function apply(ctx: Context, config?: TypstPreviewConfig): void;

@@ -4,8 +4,12 @@
  *
  * The tab is a two-face surface with its own switch, the way the sidebar's
  * Markdown preview reads: **预览** is a live `tinymist preview` page in an
- * iframe, **源码** is the file's own text with the shared code renderer. The
- * type claims `*.typ` in the `extension` band, so a click on a `.typ` file in
+ * iframe, **源码** is the file's own text. The source face is highlighted from
+ * tinymist's semantic tokens through `/api/typst-preview/source` — the shared
+ * code renderer has no Typst grammar, so it only ever painted flat text — and
+ * falls back to that renderer over the host's paged reader whenever highlighting
+ * is unavailable (no tinymist, a file past the size cap, `highlight: false`).
+ * The type claims `*.typ` in the `extension` band, so a click on a `.typ` file in
  * the Files tree lands here instead of in the plain-text fallback; the source
  * face is one button away, and the plain-text viewer stays reachable through
  * `openResource(address, { kind: 'text' })` for anything this surface cannot do.
@@ -112,8 +116,29 @@ export interface TypstPreviewProps extends TypstPreviewInjected {
     readonly useResource: (address: string) => ResourceSnapshot;
     readonly t: (key: string, params?: Record<string, unknown>) => string;
 }
+/** One loaded page of the file: its text, and its token runs when highlighted. */
+interface SourceChunk {
+    readonly offset: number;
+    readonly text: string;
+    readonly spans?: readonly (readonly number[])[];
+}
 /** The tab: one toolbar, two faces, both fed by same-origin host routes. */
 export declare function TypstPreviewTab(props: TypstPreviewProps): ReactElement;
+/**
+ * The highlighted source: one row per line, one span per token run.
+ *
+ * Runs are `[start, end, classIndex, styleBits, …]`, merged by the host, so the
+ * gaps between them are exactly the plain text — pushing those as bare strings is
+ * what keeps a page of Typst to a few thousand nodes.
+ *
+ * Exported for `scripts/render-check.mjs`, which renders a page the host really
+ * highlighted and asserts the markup, since the browser half has no other test
+ * that does not need a GUI.
+ */
+export declare function HighlightedSource(props: {
+    chunks: readonly SourceChunk[];
+    classes: readonly string[] | undefined;
+}): ReactElement;
 /** Required browser services: the two registries, copy, and the Remote carrier. */
 export declare const inject: string[];
 /**

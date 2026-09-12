@@ -61,6 +61,8 @@ export interface PreviewInstance {
     exited: boolean;
     readonly proc: ChildProcess;
 }
+/** Absolute path of the input, refusing anything that is not an existing file. */
+export declare function resolveInput(file: string, cwd: string | undefined): string;
 /** Nearest ancestor with a `typst.toml`, else the workspace, else the file's directory. */
 export declare function resolveRoot(file: string, cwd: string | undefined): string;
 /** Resolve the executable once: PATH first, then the usual install locations. */

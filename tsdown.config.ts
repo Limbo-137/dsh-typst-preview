@@ -61,8 +61,13 @@ export default [
   },
   {
     // Standalone copies of the host internals, so `scripts/smoke.mjs` can drive
-    // the proxy against a real `tinymist preview` without booting DSH.
-    entry: { 'dev/host-proxy': 'src/host/proxy.ts', 'dev/host-tinymist': 'src/host/tinymist.ts' },
+    // the proxy and the highlighter against real `tinymist` processes without
+    // booting DSH.
+    entry: {
+      'dev/host-proxy': 'src/host/proxy.ts',
+      'dev/host-tinymist': 'src/host/tinymist.ts',
+      'dev/host-highlight': 'src/host/highlight.ts',
+    },
     outDir: 'lib',
     format: ['esm'],
     platform: 'node',

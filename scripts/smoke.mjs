@@ -3,21 +3,22 @@
  *
  * Boots the plugin's own `apply()` against a stand-in for the DSH web server
  * (same exact/prefix/longest-prefix and exact-upgrade dispatch), then drives the
- * four routes the browser half uses against real `tinymist preview` processes:
+ * five routes the browser half uses against real `tinymist` processes:
  *
  *   1. `open` starts an instance and answers with same-origin paths;
  *   2. the page route forwards the preview page with its WebSocket URL rewritten;
  *   3. the upgrade route relays a live WebSocket that delivers compile results;
- *   4. `close` stops the process, and so does disposing the plugin.
+ *   4. `source` answers with a page of text plus the token runs that paint it;
+ *   5. `close` stops the process, and so does disposing the plugin.
  *
- * `open` is also refused for a cross-site request, which is the one guard that
- * keeps a random page from spawning compilers on this machine.
+ * `open` and `source` are also refused for a cross-site request, which is the one
+ * guard that keeps a random page from spawning compilers on this machine.
  *
  * Run with `node scripts/smoke.mjs` after `pnpm build`.
  */
 
 import { createServer, request as httpRequest } from 'node:http'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { apply } from '../lib/index.js'
@@ -26,9 +27,30 @@ const here = dirname(fileURLToPath(import.meta.url))
 const packageRoot = resolve(here, '..')
 const fixtureDir = join(packageRoot, '.tmp-smoke')
 const fixture = join(fixtureDir, 'smoke.typ')
+/** The source-route document: markup, math, CJK and a comment on purpose. */
+const markup = join(fixtureDir, 'markup.typ')
 
+// Start clean: a preview watches this directory, and leftovers from an earlier
+// run make the fixture and the watched tree disagree about what is there.
+rmSync(fixtureDir, { recursive: true, force: true })
 mkdirSync(fixtureDir, { recursive: true })
 writeFileSync(fixture, '#set page(width: 240pt, height: 160pt)\n= Smoke\n$ x^2 + y^2 = z^2 $\n', 'utf8')
+writeFileSync(
+  markup,
+  [
+    // A CJK font is not optional: Typst's default Latin font has no Chinese
+    // glyphs, so without the stack the page renders boxes and says nothing
+    // useful about the pipeline. `typst fonts` lists what a machine has.
+    '#set text(font: ("New Computer Modern", "Songti SC", "STSong", "SimSun"))',
+    '#set page(width: 240pt, height: 160pt)',
+    // Referencing a heading needs numbering, or Typst refuses the reference.
+    '#set heading(numbering: "1.")',
+    '= Smoke <smoke>',
+    '$ x^2 + y^2 = z^2 $',
+    'Let *\u5f3a\u8c03* and #emph[thing] be $x_1$ for @smoke. // \u6ce8\u91ca',
+  ].join('\n') + '\n',
+  'utf8',
+)
 
 /* ---------------------------------------------------------------- stand-ins */
 
@@ -211,6 +233,89 @@ try {
 
   const reused = await postJson(`${origin}/api/typst-preview/open`, { file: fixture, cwd: fixtureDir, sessionId: 'smoke' }, sameSite)
   check('a second open reuses the instance', reused.body.token === token, `${String(reused.body.token)} vs ${String(token)}`)
+
+  /* ---------------------------------------------------------- source route */
+
+  const refusedSource = await postJson(
+    `${origin}/api/typst-preview/source`,
+    { file: markup, cwd: fixtureDir, offset: 1 },
+    { 'sec-fetch-site': 'cross-site' },
+  )
+  check('cross-site source is refused', refusedSource.status === 403, `status ${refusedSource.status}`)
+
+  const highlighted = await postJson(
+    `${origin}/api/typst-preview/source`,
+    { file: markup, cwd: fixtureDir, offset: 1 },
+    sameSite,
+  )
+  const sourcePage = highlighted.body
+  check('source answers with a highlighted page', highlighted.status === 200 && sourcePage.ok === true, JSON.stringify(sourcePage).slice(0, 200))
+  check('source page carries the file text', typeof sourcePage.text === 'string' && sourcePage.text.includes('#set page'), JSON.stringify(sourcePage.text).slice(0, 120))
+  check(
+    'source page is fully paged',
+    // The fixture ends with a newline, so its last line is the empty one.
+    sourcePage.lineCount === 7 && sourcePage.lines === 7 && sourcePage.eof === true && Array.isArray(sourcePage.spans) && sourcePage.spans.length === 7,
+    `lineCount ${sourcePage.lineCount}, lines ${sourcePage.lines}, eof ${sourcePage.eof}, spans ${sourcePage.spans?.length}`,
+  )
+
+  /** The runs of one line as `{ text, className, style, inBounds }`. */
+  const runsOf = (body, lineIndex) => {
+    const line = body.text.split('\n')[lineIndex] ?? ''
+    const flat = body.spans[lineIndex] ?? []
+    const out = []
+    for (let i = 0; i + 3 < flat.length; i += 4) {
+      const [start, end, classIndex, style] = [flat[i], flat[i + 1], flat[i + 2], flat[i + 3]]
+      out.push({
+        text: line.slice(start, end),
+        className: body.classes[classIndex],
+        style,
+        inBounds: start >= 0 && end <= line.length && end >= start,
+      })
+    }
+    return out
+  }
+
+  const first = runsOf(sourcePage, 0)
+  check(
+    'the `#set` keyword is painted as a keyword',
+    first.some((run) => run.text === '#set' && run.className === 'keyword'),
+    JSON.stringify(first).slice(0, 200),
+  )
+  check(
+    'every run stays inside its line',
+    sourcePage.spans.every((_, index) => runsOf(sourcePage, index).every((run) => run.inBounds)),
+    'a run crossed its line',
+  )
+  const cjkLine = sourcePage.text.split('\n').findIndex((line) => line.includes('#emph'))
+  const cjk = runsOf(sourcePage, cjkLine)
+  check(
+    'strong markup and CJK offsets land on the right characters',
+    cjk.some((run) => run.text === '*' && run.style === 1) &&
+      cjk.some((run) => run.text === '// \u6ce8\u91ca' && run.className === 'comment'),
+    JSON.stringify(cjk).slice(0, 260),
+  )
+
+  const windowed = await postJson(
+    `${origin}/api/typst-preview/source`,
+    { file: markup, cwd: fixtureDir, offset: 2, limit: 2 },
+    sameSite,
+  )
+  check(
+    'a page window carries only its own lines',
+    windowed.body.lines === 2 && windowed.body.eof === false && windowed.body.nextOffset === 4,
+    `lines ${windowed.body.lines}, eof ${windowed.body.eof}, next ${windowed.body.nextOffset}`,
+  )
+
+  const missing = await postJson(
+    `${origin}/api/typst-preview/source`,
+    { file: join(fixtureDir, 'nope.typ'), cwd: fixtureDir, offset: 1 },
+    sameSite,
+  )
+  check(
+    'a missing file is refused as a fallback, not an error',
+    missing.status === 200 && missing.body.ok === false && typeof missing.body.error === 'string',
+    JSON.stringify(missing.body).slice(0, 160),
+  )
 
   const closed = await postJson(`${origin}/api/typst-preview/close`, { token }, sameSite)
   check('close stops the instance', closed.status === 200 && closed.body.stopped === true)
