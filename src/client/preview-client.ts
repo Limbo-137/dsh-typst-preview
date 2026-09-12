@@ -106,6 +106,43 @@ export function acquirePreview(key: string, request: OpenPreviewRequest): Promis
 }
 
 /**
+ * Ask the host for this key's preview again, keeping the reference count.
+ *
+ * Used before a reload re-points an iframe at a cached URL: the token the tab
+ * still holds may belong to an instance the host has already reaped (idle window,
+ * LRU eviction, a crash), and a page request for a dead token answers with the
+ * "already reaped" page. `open` is idempotent — a running instance is reused and
+ * comes back with the same token, a dead one is started again — so this is the
+ * cheap way to make a reload always valid.
+ *
+ * @param key - the identity passed to {@link acquirePreview}.
+ * @param request - what to start when nothing is running.
+ * @returns the host's current answer for this key.
+ */
+export function refreshPreview(key: string, request: OpenPreviewRequest): Promise<OpenPreviewResult> {
+  const existing = entries.get(key)
+  const promise = postJson(OPEN_URL, request)
+    .then((body): OpenPreviewResult => ({
+      ok: body.ok === true,
+      token: typeof body.token === 'string' ? body.token : undefined,
+      url: typeof body.url === 'string' ? body.url : undefined,
+      ws: typeof body.ws === 'string' ? body.ws : undefined,
+      file: typeof body.file === 'string' ? body.file : undefined,
+      root: typeof body.root === 'string' ? body.root : undefined,
+      error: typeof body.error === 'string' ? body.error : undefined,
+    }))
+    .catch(failureOf)
+  if (existing !== undefined) {
+    if (existing.timer !== undefined) {
+      clearTimeout(existing.timer)
+      existing.timer = undefined
+    }
+    entries.set(key, { count: existing.count, timer: undefined, promise })
+  }
+  return promise
+}
+
+/**
  * Drop one reference; the last one stops the preview after a short grace.
  * @param key - the identity passed to {@link acquirePreview}.
  */

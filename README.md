@@ -26,8 +26,10 @@ Both faces stay mounted, so switching to Source and back does not tear down the 
 server — it keeps compiling in the background. The preview *document* is mounted only for
 the tab you are looking at: one live preview page is a whole WebKit document with a
 compiled renderer and a socket, and keeping one per open tab is how a browser tab reaches
-multiple gigabytes. Returning to a tab reloads its page (~1 s); the `tinymist` process
-behind it was never torn down, so nothing is recompiled from scratch.
+multiple gigabytes. Returning to a tab reloads its page (~1 s), and it re-opens the preview
+first: the token the tab still holds may belong to an instance that was reaped while the tab
+was hidden, and asking for a dead token used to answer with an error page instead of the
+document.
 
 `.typ` is claimed through the Sidebar's tab-type registry at `priority: 'extension'`, which
 outranks the built-in plain-text fallback viewer. To send `.typ` back to the native text
@@ -133,7 +135,9 @@ must stay reachable:
   catches anything the cap misses.
 - **Two reapers**: an idle one (default 30 min of no requests) and an orphan one that kills,
   after 60 s, any child no key claims any more — the safety net for a close request the
-  browser never delivered.
+  browser never delivered. A preview with a live relay socket is never idle: "nobody is
+  watching" cannot be inferred from request timestamps, because a page nobody recompiles
+  makes no requests at all.
 - **Exit hook**: a graceful host exit SIGKILLs whatever is still running, so a restart does
   not leave orphans behind.
 
@@ -169,14 +173,15 @@ node scripts/smoke.mjs
 #   open starts an instance, the page is proxied, its WebSocket URL is rewritten,
 #   the relay delivers real frames, a second open reuses the instance, the source
 #   route answers with text plus token runs (and a page window, and a refusal),
-#   close reaps it, and a cross-site request is refused — 19/19.
+#   close reaps it, an unknown page token answers a readable page rather than JSON,
+#   and a cross-site request is refused — 20/20.
 
 # Host half: the preview fleet against the OS process table
 node scripts/leak-check.mjs
 #   two simultaneous opens of one file share a token and one child; the LRU cap
 #   kills what it evicts; a child removed from the instance map is still closable
-#   and still counted; the reaper collects a stray; dispose leaves nothing alive
-#   — 13/13.
+#   and still counted; the reaper collects a stray but spares a preview that still
+#   holds a socket; dispose leaves nothing alive — 15/15.
 
 # Browser half: the built client bundle loaded the way the shell loads it, rendered
 # with React's static renderer against a page the host really highlighted

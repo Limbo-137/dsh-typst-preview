@@ -117,6 +117,35 @@ function pageLines(value: number | undefined): number {
   return Math.max(1, Math.floor(positive(value, 800)))
 }
 
+/**
+ * What a page request for an unknown token answers.
+ *
+ * It is shown inside the preview iframe for the moment it takes the browser half
+ * to notice and re-open, so it says what happened and that a reload fixes it.
+ */
+const STALE_PREVIEW_HTML = `<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><title>预览已失效</title>
+<style>
+ body{margin:0;padding:24px;font:13px/1.7 system-ui,-apple-system,"PingFang SC",sans-serif;
+      color:#495057;background:#fff}
+ @media (prefers-color-scheme:dark){body{color:#ced4da;background:#1a1b1e}}
+ code{font-family:ui-monospace,monospace;background:rgba(127,127,127,.14);padding:1px 4px;border-radius:4px}
+</style></head>
+<body><p><b>这个预览已经被回收了。</b></p>
+<p>This preview has been reaped. 侧边栏会重新开一个 —— 如果一直停在这里，按一下工具栏的重新载入。</p>
+</body></html>`
+
+/** Answer with a small HTML document, used where the reader is a person. */
+function writeHtml(res: ServerResponse, status: number, body: string): void {
+  res.writeHead(status, {
+    'content-type': 'text/html; charset=utf-8',
+    'content-length': String(Buffer.byteLength(body)),
+    'cache-control': 'no-store',
+    'referrer-policy': 'no-referrer',
+  })
+  res.end(body)
+}
+
 function writeJson(res: ServerResponse, status: number, body: unknown): void {
   const payload = JSON.stringify(body)
   res.writeHead(status, {
@@ -224,6 +253,13 @@ export function apply(ctx: Context, config?: TypstPreviewConfig): void {
           return
         }
         live.lastUsed = Date.now()
+        // Count the relay for the instance's lifetime: the reaper must not call a
+        // preview idle while a browser is still holding its socket open.
+        live.sockets += 1
+        socket.once('close', () => {
+          live.sockets = Math.max(0, live.sockets - 1)
+          live.lastUsed = Date.now()
+        })
         proxyWebSocket(live.dataPort, req, socket, head)
       },
     })
@@ -394,7 +430,10 @@ export function apply(ctx: Context, config?: TypstPreviewConfig): void {
       const token = tokenOf(req.url, PAGE_PREFIX)
       const instance = token === undefined ? undefined : previews.byToken(token)
       if (instance === undefined || instance.exited) {
-        writeJson(res, 404, { ok: false, error: 'no such preview' })
+        // The iframe was re-pointed at a token the host has already reaped. The
+        // browser half re-opens and reloads, so this answer is a sentence a person
+        // can read rather than a JSON blob rendered as the page.
+        writeHtml(res, 404, STALE_PREVIEW_HTML)
         return
       }
       instance.lastUsed = Date.now()

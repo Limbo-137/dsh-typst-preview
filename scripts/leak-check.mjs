@@ -56,7 +56,7 @@ function fixture(name) {
 }
 
 const files = Array.from({ length: 5 }, (_, index) => fixture(`f${index}.typ`))
-const previews = new TinymistPreviews({ ...DEFAULT_OPTIONS, maxInstances: 2, readyTimeoutMs: 20_000 })
+const previews = new TinymistPreviews({ ...DEFAULT_OPTIONS, maxInstances: 2, readyTimeoutMs: 20_000, idleTimeoutMs: 60_000 })
 const stopReaper = previews.startReaper()
 
 const open = async (file, invert = 'never') => {
@@ -102,7 +102,20 @@ try {
   check('the reaper kills a child nothing claims any more', !alive(stray), `port ${stray.dataPort}`)
   check('and the manager stopped counting it', previews.processCount === 1, `${previews.processCount}`)
 
-  /* 5. what is still open is still usable, and dispose takes the rest */
+  /* 5. a preview somebody is holding open is never "idle" */
+  const held = await open(files[0])
+  held.sockets = 1
+  held.lastUsed = Date.now() - 10 * 60 * 1000
+  await previews.reap()
+  await new Promise((settle) => setTimeout(settle, 300))
+  check('a preview with a live relay socket survives the idle reaper', alive(held), `port ${held.dataPort}`)
+  held.sockets = 0
+  held.lastUsed = Date.now() - 10 * 60 * 1000
+  await previews.reap()
+  await new Promise((settle) => setTimeout(settle, 500))
+  check('and is reaped once the socket is gone', !alive(held), `port ${held.dataPort}`)
+
+  /* 6. what is still open is still usable, and dispose takes the rest */
   const last = previews.list()[0]
   check('the remaining preview still answers', last !== undefined && alive(last), `${previews.processCount} left`)
   await previews.dispose()

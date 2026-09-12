@@ -37,6 +37,21 @@ export interface OpenPreviewResult {
  */
 export declare function acquirePreview(key: string, request: OpenPreviewRequest): Promise<OpenPreviewResult>;
 /**
+ * Ask the host for this key's preview again, keeping the reference count.
+ *
+ * Used before a reload re-points an iframe at a cached URL: the token the tab
+ * still holds may belong to an instance the host has already reaped (idle window,
+ * LRU eviction, a crash), and a page request for a dead token answers with the
+ * "already reaped" page. `open` is idempotent — a running instance is reused and
+ * comes back with the same token, a dead one is started again — so this is the
+ * cheap way to make a reload always valid.
+ *
+ * @param key - the identity passed to {@link acquirePreview}.
+ * @param request - what to start when nothing is running.
+ * @returns the host's current answer for this key.
+ */
+export declare function refreshPreview(key: string, request: OpenPreviewRequest): Promise<OpenPreviewResult>;
+/**
  * Drop one reference; the last one stops the preview after a short grace.
  * @param key - the identity passed to {@link acquirePreview}.
  */

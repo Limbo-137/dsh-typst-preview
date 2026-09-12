@@ -234,6 +234,13 @@ try {
   const reused = await postJson(`${origin}/api/typst-preview/open`, { file: fixture, cwd: fixtureDir, sessionId: 'smoke' }, sameSite)
   check('a second open reuses the instance', reused.body.token === token, `${String(reused.body.token)} vs ${String(token)}`)
 
+  const stalePage = await fetchText(`${origin}/api/typst-preview/p/deadbeefdeadbeef/`, sameSite)
+  check(
+    'an unknown page token answers a readable page, not a JSON blob',
+    stalePage.status === 404 && stalePage.body.includes('<html') && !stalePage.body.includes('"error"'),
+    `status ${stalePage.status}, ${stalePage.body.slice(0, 80)}`,
+  )
+
   /* ---------------------------------------------------------- source route */
 
   const refusedSource = await postJson(

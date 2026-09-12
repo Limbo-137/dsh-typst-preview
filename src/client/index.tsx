@@ -24,7 +24,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactElement, ReactNode } from 'react'
 import { CodeBlock, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 import { basenameOf, parseFileAddress } from './address'
-import { acquirePreview, releaseAllPreviews, releasePreview, type InvertMode } from './preview-client'
+import { acquirePreview, refreshPreview, releaseAllPreviews, releasePreview, type InvertMode } from './preview-client'
 import { fetchSourcePage, type HighlightedSourcePage } from './source-client'
 
 /* -------------------------------------------------------------------------- *
@@ -396,6 +396,24 @@ export function TypstPreviewTab(props: TypstPreviewProps): ReactElement {
   const file = absolutePath ?? address?.path
   const key = file === undefined ? undefined : `${file}\u0000${invert}`
 
+  /**
+   * Re-ask the host for this file's preview and adopt its answer.
+   *
+   * Called before anything re-points the iframe at a cached URL — the toolbar's
+   * reload, and coming back to a tab whose preview document was unmounted. A
+   * preview can be gone by then (idle window with no socket held, the LRU cap
+   * evicting this tab's instance, a crash), and the tab's cached token would load
+   * the "already reaped" page instead of the document.
+   */
+  function reopenPreview(): void {
+    if (file === undefined || key === undefined) return
+    void refreshPreview(key, { file, cwd, sessionId, invert }).then((result) => {
+      if (result.ok && result.url !== undefined) setPreview({ status: 'ready', url: result.url })
+      else if (result.ok) setPreview({ status: 'starting' })
+      else setPreview({ status: 'error', error: result.error ?? translate.current('error.unknown') })
+    })
+  }
+
   // The framework's `t` is a fresh binding per render, so it must stay out of
   // effect dependencies; a stable ref keeps the message without the churn.
   const translate = useRef(t)
@@ -435,6 +453,20 @@ export function TypstPreviewTab(props: TypstPreviewProps): ReactElement {
       releasePreview(key)
     }
   }, [file, key, cwd, sessionId, invert])
+
+  // A tab that becomes visible again remounts its preview document, so re-open
+  // before the browser asks for the token this tab still holds. The first mount
+  // is the acquire effect's job, not this one's.
+  const latestPreview = useRef(preview)
+  latestPreview.current = preview
+  const wasMounted = useRef(previewMounted)
+  useEffect(() => {
+    if (wasMounted.current === previewMounted) return
+    wasMounted.current = previewMounted
+    if (!previewMounted || latestPreview.current.url === undefined) return
+    reopenPreview()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only the visibility edge matters
+  }, [previewMounted])
 
   // Source face: the highlighted host reader when it can, the paged plain-text
   // reader when it cannot. The first page is fetched when the face appears, and
@@ -545,7 +577,10 @@ export function TypstPreviewTab(props: TypstPreviewProps): ReactElement {
         aria-label={t('tool.reload')}
         data-typst-tool="reload"
         disabled={preview.status !== 'ready'}
-        onClick={() => setFrameNonce((value) => value + 1)}
+        onClick={() => {
+          reopenPreview()
+          setFrameNonce((value) => value + 1)
+        }}
       >
         <IconRefresh />
       </button>,

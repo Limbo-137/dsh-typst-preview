@@ -58,6 +58,8 @@ export interface PreviewInstance {
     readonly args: readonly string[];
     readonly startedAt: number;
     lastUsed: number;
+    /** Open WebSocket relays: the browser is holding this preview on screen. */
+    sockets: number;
     exited: boolean;
     readonly proc: ChildProcess;
 }

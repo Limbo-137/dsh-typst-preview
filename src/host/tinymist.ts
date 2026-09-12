@@ -77,6 +77,8 @@ export interface PreviewInstance {
   readonly args: readonly string[]
   readonly startedAt: number
   lastUsed: number
+  /** Open WebSocket relays: the browser is holding this preview on screen. */
+  sockets: number
   exited: boolean
   readonly proc: ChildProcess
 }
@@ -315,6 +317,12 @@ export class TinymistPreviews {
         if (now - instance.startedAt > ORPHAN_GRACE_MS) await this.stop(instance)
         continue
       }
+      // A live relay socket means somebody is looking at this page: "idle" is
+      // about nobody watching, and a page nobody recompiles makes no requests, so
+      // watching cannot be inferred from request timestamps alone. Without this,
+      // a tab left open on an unchanged document was reaped after the idle
+      // window and the next reload answered "no such preview".
+      if (instance.sockets > 0) continue
       if (instance.lastUsed < now - this.options.idleTimeoutMs) await this.stop(instance)
     }
     const ceiling = Math.max(2, this.options.maxInstances * 2)
@@ -431,6 +439,7 @@ export class TinymistPreviews {
       args,
       startedAt: Date.now(),
       lastUsed: Date.now(),
+      sockets: 0,
       exited: false,
       proc,
     }
