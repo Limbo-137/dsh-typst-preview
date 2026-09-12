@@ -1,0 +1,15 @@
+# dsh-typst-preview bundle patch: inserts the dual-face plugin row into the web
+# profile roster. Applied as a profile bundle layer (the `dsh.bundle.patch`
+# manifest field) over dsh-base; activate with
+#   dsh plugin --profile web add link:~/dsh/dsh-typst-preview
+#
+# The node half (exports ".") runs in the host process: it owns one
+# `tinymist preview` process per open .typ file, allocates a private port pair
+# for each, and reverse-proxies both the preview page and its WebSocket through
+# `/api/typst-preview/*` on the app origin. The `dsh.client` declaration in
+# package.json serves the browser half (exports "./client") at
+# /plugins/dsh-typst-preview/client.js, which registers a `typst-preview` tab
+# type in the native right Sidebar through `ctx.sidebarRightTabs`.
+- insert:
+    - id: typst-preview
+      name: 'dsh-typst-preview'

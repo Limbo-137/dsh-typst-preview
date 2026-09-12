@@ -1,0 +1,16 @@
+node_modules/
+
+# Local build config: points pnpm's store/cache at a path on this machine only.
+# A clone should use its own defaults, so this file is never committed.
+.npmrc
+
+# Scratch directories used by the verification scripts.
+.tmp-smoke/
+.tmp-dsh-home/
+cdp-*/
+
+# Packed tarball, if you build a release locally.
+*.tgz
+
+.DS_Store
+*.log
