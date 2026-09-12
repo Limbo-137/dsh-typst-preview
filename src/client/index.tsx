@@ -377,7 +377,10 @@ function storeInvert(mode: InvertMode): void {
 /** The tab: one toolbar, two faces, both fed by same-origin host routes. */
 export function TypstPreviewTab(props: TypstPreviewProps): ReactElement {
   const { sessionId, useTabInfo, useSessions, useResource, read, t } = props
-  const { tab } = useTabInfo()
+  const { tab, sidebar } = useTabInfo()
+  // A fullscreen pane reports `visible: false` in some layouts; never hide the
+  // preview there, because the user is looking straight at it.
+  const previewMounted = tab.visible !== false || sidebar.fullscreen
   const meta = useResource(tab.contentId)
   const cwd = useSessions((sessions) => sessions.byId[sessionId]?.cwd)
   const address = useMemo(() => parseFileAddress(tab.contentId, sessionId), [tab.contentId, sessionId])
@@ -652,7 +655,7 @@ export function TypstPreviewTab(props: TypstPreviewProps): ReactElement {
             // ends up several gigabytes deep. Only the tab the user is looking at
             // keeps its document mounted — the tinymist process stays alive either
             // way, so coming back is a page load, not a new compiler.
-            tab.visible === false ? null : (
+            !previewMounted ? null : (
               <iframe
                 key={frameNonce}
                 className="dshTypstPreview_frame"
