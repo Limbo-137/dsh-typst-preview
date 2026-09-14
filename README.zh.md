@@ -37,7 +37,7 @@ English: [README.md](README.md)。
 
 **缺东西或出错时**：没有 `tinymist` → 预览面报错、源码面退回纯文本；文件超过 `highlightMaxBytes`（4 MiB）→ 不高亮但仍可读；预览进程崩溃/被杀 → 回收器清理，下次按需重启；进程数有上限（`maxInstances`，外加两倍硬闸），闲置与游离的子进程都会被回收，所以丢掉的子进程活不过启动它的那个 tab。
 
-**声明的兼容范围**：Node `>=22`、DSH `>=0.1.5-rc.1 <0.2.0`（逐版记录：`0.1.5-rc.1: compatible`）、profile `web`。一次性 Profile 上的安装/启动/卸载/回滚实测记录见 [`docs/profile-evidence.md`](docs/profile-evidence.md)；其它 DSH 版本在做同样的实测之前保持 `unknown`。
+**声明的兼容范围**：Node `>=22`、DSH `>=0.1.5-rc.1 <0.2.0`（逐版记录：`0.1.5-rc.1: compatible`、`0.1.5-rc.2: compatible`）、profile `web`。一次性 Profile 上的安装/启动/卸载/回滚实测记录见 [`docs/profile-evidence.md`](docs/profile-evidence.md)；其它 DSH 版本在做同样的实测之前保持 `unknown`。
 
 ## 安装
 

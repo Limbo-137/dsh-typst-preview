@@ -1,6 +1,6 @@
 {
   "name": "dsh-typst-preview",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "DeepSeek Harness web plugin: live Typst preview as a native right-Sidebar tab, rendered by a per-file `tinymist preview` server proxied over the app origin, with the source face highlighted from tinymist's semantic tokens.",
   "type": "module",
   "main": "lib/index.js",
@@ -23,7 +23,8 @@
     "compatibility": {
       "dsh": ">=0.1.5-rc.1 <0.2.0",
       "dshReleases": {
-        "0.1.5-rc.1": "compatible"
+        "0.1.5-rc.1": "compatible",
+        "0.1.5-rc.2": "compatible"
       },
       "profiles": [
         "web"
@@ -48,7 +49,7 @@
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.2",
-    "@deepseek-ai/dsh-client-ui-primitives": "0.1.5-rc.1",
+    "@deepseek-ai/dsh-client-ui-primitives": "0.1.5-rc.2",
     "@types/node": "^22.0.0",
     "@types/react": "~18.3.1",
     "react": "^18.2.0",

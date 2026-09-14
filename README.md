@@ -70,7 +70,7 @@ still reads; a crashed or killed preview is reaped and started again on demand; 
 reaped, so a lost child cannot outlive the tab that started it.
 
 **Declared compatibility**: Node `>=22`, DSH `>=0.1.5-rc.1 <0.2.0` (per-release record:
-`0.1.5-rc.1: compatible`), profile `web`. The install/start/uninstall/rollback transcript on a
+`0.1.5-rc.1: compatible`, `0.1.5-rc.2: compatible`), profile `web`. The install/start/uninstall/rollback transcript on a
 disposable profile is in [`docs/profile-evidence.md`](docs/profile-evidence.md); other DSH releases
 stay `unknown` there until the same run is done on them.
 

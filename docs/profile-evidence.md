@@ -7,7 +7,8 @@ Linux or Windows coverage.
 
 - **Tested commit**: `2e07f4f3c0fae36528933eb3e61330dd46217805` (the manifest change that
   declares `engines.node` and `dsh.compatibility`). This document was added afterwards and
-  changes no runtime code.
+  changes no runtime code. The same run was repeated on **DSH `0.1.5-rc.2` with plugin `0.3.3`**
+  and is recorded verbatim in [the second run](#second-run-dsh-015-rc2-plugin-033) below.
 - **Host**: macOS (darwin arm64), Node `v22.23.2`, DSH `0.1.5-rc.1`, tinymist `v0.15.0-rc1`.
 - **Isolation**: `DSH_HOME=/tmp/dsh-evidence` with its own `profiles/web/package.json`
   (`bundles: [@deepseek-ai/dsh-base, @deepseek-ai/dsh-web-app, dsh-typst-preview]`). The real
@@ -96,10 +97,118 @@ looking at the rolled-back build, not at a cached one.
 
 ## What this evidence does not cover
 
-- Only macOS arm64 with Node 22.23.2 and DSH 0.1.5-rc.1. The manifest declares `>=22` and
-  `0.1.5-rc.1: compatible` for exactly that reason; other releases are `unknown` until tested.
+- Only macOS arm64 with Node 22.23.2, DSH 0.1.5-rc.1 and DSH 0.1.5-rc.2. The manifest declares
+  `>=22` and `0.1.5-rc.1`/`0.1.5-rc.2` `compatible` for exactly that reason; other releases are
+  `unknown` until tested.
 - No visual check: the preview page was verified by HTTP status and byte count, not by eye.
 - No security review. The plugin spawns a local `tinymist`, reads the `.typ` files it is asked
   about and proxies its own child processes over the app origin — see the permissions section in
   the README for the exact bounds, and expect `user-reviewed` rather than an automatic pass for
   a plugin whose whole job is to drive an external compiler.
+
+## Second run: DSH `0.1.5-rc.2`, plugin `0.3.3`
+
+Same protocol as above, repeated on the next release so the `0.1.5-rc.2: compatible` claim in the
+manifest rests on the same kind of transcript rather than on a version-range argument.
+
+- **Tested artifact**: the packed release tarball (`dsh-typst-preview-0.3.3.tgz`, published as the
+  release asset `dsh-typst-preview.tgz`) — installed from that file rather than through a
+  working-tree link; its checksum is in the release's own notes.
+- **Host**: macOS (darwin arm64), Node `v22.23.2`, tinymist `v0.15.0-rc1`. The `dsh` binary on
+  `PATH` stamps itself `0.1.5-rc.1`, but its `^0.1.5-rc.1` ranges resolve upward, so the shell it
+  boots is **`0.1.5-rc.2`**; that was read back off disk rather than assumed:
+  `@deepseek-ai/dsh-base` and `@deepseek-ai/dsh-web-app` both resolve to `…/0.1.5-rc.2/…`.
+- **Isolation**: `DSH_HOME=/tmp/dsh-evidence-rc2`, a profile created by the CLI itself. The real
+  `~/.dsh` was never written to; the app's token was read from its boot line and used through a
+  cookie jar.
+- **Cleanup**: the temp home was deleted (`rm -rf /tmp/dsh-evidence-rc2`) and the run left **no**
+  `tinymist` processes behind.
+
+### Install
+
+```console
+$ DSH_HOME=/tmp/dsh-evidence-rc2 dsh plugin --profile web add /…/dsh-typst-preview-0.3.3.tgz
+dsh: initialized profile web at /tmp/dsh-evidence-rc2/profiles/web
+dependencies:
++ dsh-typst-preview file:/…/dsh-typst-preview-0.3.3.tgz
+Done in 239ms using pnpm v11.25.0
+
+$ node -e "const d=require('./node_modules/dsh-typst-preview/package.json');console.log(d.version, JSON.stringify(d.engines), JSON.stringify(d.dsh.compatibility))"
+0.3.3 {"node":">=22"} {"dsh":">=0.1.5-rc.1 <0.2.0","dshReleases":{"0.1.5-rc.1":"compatible","0.1.5-rc.2":"compatible"},"profiles":["web"]}
+
+$ node -e "const s=require('./node_modules/dsh-typst-preview/package.json').scripts||{};console.log(Object.keys(s).filter(k=>/install|prepare|prepack|postpack/.test(k)))"
+[]
+
+$ ls -la node_modules/dsh-typst-preview/lib/index.js node_modules/dsh-typst-preview/lib/client.js
+-rw-r--r--  wheel  47832 node_modules/dsh-typst-preview/lib/index.js
+-rw-r--r--  wheel  39840 node_modules/dsh-typst-preview/lib/client.js
+```
+
+### Start
+
+```console
+$ DSH_HOME=/tmp/dsh-evidence-rc2 dsh --profile web --port 3099 --no-open
+dsh web: http://127.0.0.1:3099/?token=…
+
+$ curl -s -b jar http://127.0.0.1:3099/api/typst-preview/status
+{"ok":true,"executable":"/Users/limbo/.local/bin/tinymist","pagePrefix":"/api/typst-preview/p/",
+ "wsPrefix":"/api/typst-preview/ws/","highlight":{"enabled":true,"lines":800,"servers":[]},
+ "processes":0,"instances":[]}
+
+$ curl -s -X POST -d '{"file":"/tmp/dsh-evidence-rc2/ws/evidence.typ","cwd":"/tmp/dsh-evidence-rc2/ws",
+                       "sessionId":"evidence-rc2","invert":"never"}' …/api/typst-preview/open
+{"ok":true,"token":"578108ddfec3e0dc76","url":"/api/typst-preview/p/578108ddfec3e0dc76/",
+ "ws":"/api/typst-preview/ws/578108ddfec3e0dc76",…}
+
+$ curl -s -o /dev/null -w '%{http_code} %{size_download} bytes\n' …/api/typst-preview/p/578108ddfec3e0dc76/
+200 1647735 bytes
+
+$ curl -s -X POST -d '{"file":"…/evidence.typ","offset":1}' …/api/typst-preview/source
+{"ok":true,…,"lineCount":5,"lines":5,"eof":true,"nextOffset":6,"text":"#set text(font: …"}
+
+$ curl -s -b jar …/api/typst-preview/status      # instance is live
+… "highlight":{"enabled":true,"lines":800,"servers":[{"root":"/tmp/dsh-evidence-rc2/ws","files":1}]},
+   "processes":1,"instances":[{"token":"578108ddfec3e0dc76",…
+
+$ curl -s -X POST -d '{"token":"…"}' …/api/typst-preview/close   ; # then:
+{"ok":true,"stopped":true} | processes 0
+```
+
+The 1,647,735-byte body is the same byte count as the `0.1.5-rc.1` run above, and the page route,
+the WebSocket rewrite and the semantic-token source route all behave identically.
+
+### Client half
+
+The browser half is the other half of the compatibility question, and it is the half that touches
+a versioned shell API. Two checks, both against the shell that actually served this instance:
+
+```console
+$ curl -s …/ | grep -o 'dsh-typst-preview/client.js'
+dsh-typst-preview/client.js            # the rc.2 shell preloads our client bundle
+```
+```js
+// the shell's frozen module table, and the module it points at (from the served bundle):
+//   "@deepseek-ai/dsh-client-ui-primitives": Zg
+//   const Zg = Object.freeze({ …, CodeBlock: a8, …, writeClipboard: Rn })
+```
+
+So the specifier the plugin's client bundle `require()`s is still registered under rc.2, and both
+symbols it uses are still exported. A headless browser reached the app in the same run and
+confirmed the bundle is really requested at boot; `scripts/gui-check.mjs` then stopped on
+*fixture* grounds (a throwaway home has no session to open), not on anything the plugin did, so
+the click-through of the Sidebar tab was **not** repeated in this run — the client half is covered
+by the module-table check above, by `scripts/render-check.mjs`, and by the fact that the `lib/`
+tree rebuilt against `@deepseek-ai/dsh-client-ui-primitives@0.1.5-rc.2` is byte-identical to the
+one built against `0.1.5-rc.1`.
+
+### Uninstall
+
+```console
+-- plugin NOT in the profile (uninstalled) --
+  app root                   HTTP 303
+  /api/typst-preview/status  HTTP 404
+  not found
+```
+
+Same conclusion as before: dropping the dependency and the `dsh.profile.bundles` entry is enough —
+the app boots and keeps serving, the plugin's routes are gone.
