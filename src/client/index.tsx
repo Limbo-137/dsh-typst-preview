@@ -41,6 +41,12 @@ interface SidebarRightTabDefinition {
   readonly priority?: 'extension' | 'builtin' | 'fallback'
   readonly canOpen?: (address: string) => boolean
   readonly title: (address: string) => string
+  /**
+   * Keep a visited body mounted across tab and Session changes, collapse and
+   * docking. Added in DSH 0.1.7; hosts that predate it ignore the field, which
+   * is why it is optional here rather than required.
+   */
+  readonly keepMounted?: boolean
 }
 
 /** Stage-one registry, behind `ctx.sidebarRightTabs`. */
@@ -269,6 +275,11 @@ export function typstTabDefinition(): SidebarRightTabDefinition {
     priority: 'extension',
     canOpen: isTypstAddress,
     title: (address) => basenameOf(address),
+    // 0.1.7 unmounts a body once its tab stops being visible — collapsing the
+    // right Sidebar, switching tabs, docking the panel elsewhere. The preview
+    // document and the compiler behind it are the whole point of leaving a tab
+    // open, so this type asks to be kept. On 0.1.5 the field is ignored.
+    keepMounted: true,
   }
 }
 

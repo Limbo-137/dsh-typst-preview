@@ -40,9 +40,15 @@ viewer instead, change `priority` in `typstTabDefinition()` (`src/client/index.t
 ## Requirements
 
 - **DSH `>= 0.1.5-rc.1`** — the plugin registers a tab type on the native right Sidebar
-  (`ctx.sidebarRightTabs`) and mounts its body into the `sidebar.right.pane.tab` slot.
+  (`ctx.sidebarRightTabs`) and mounts its body into the `sidebar.right.pane.tab` slot. That pair is
+  the extension path the 0.1.7 docking Sidebar documents for itself, so the same two calls serve
+  both the panel 0.1.5 shipped and the dockable, floatable one 0.1.7 ships; `keepMounted: true`
+  asks a 0.1.7 host to keep a visited tab alive across collapse, tab switches and docking.
 - **`tinymist`** — looked up on `PATH`, then in `~/.local/bin`, `/opt/homebrew/bin`,
-  `/usr/local/bin` and `~/.cargo/bin`. Override the path with `tinymistPath` (below).
+  `/usr/local/bin` and `~/.cargo/bin`. Override the path with `tinymistPath` (below). Both faces use
+  that one resolved path, which is what lets the plugin work under a host whose `PATH` is only
+  `/usr/bin:/bin:/usr/sbin:/sbin` — the desktop app's host process, where that lookup order is the
+  only reason a preview appears at all.
 - The predecessor of this plugin (`~/.dsh/plugins/dsh-typst-preview`, mounted onto the
   `dsh-better-sidebar` file viewer) is not compatible with 0.1.5 and is superseded by this one.
 
@@ -69,10 +75,14 @@ still reads; a crashed or killed preview is reaped and started again on demand; 
 (`maxInstances`, plus a hard ceiling of twice that) and both idle and orphaned children are
 reaped, so a lost child cannot outlive the tab that started it.
 
-**Declared compatibility**: Node `>=22`, DSH `>=0.1.5-rc.1 <0.2.0` (per-release record:
-`0.1.5-rc.1: compatible`, `0.1.5-rc.2: compatible`), profile `web`. The install/start/uninstall/rollback transcript on a
-disposable profile is in [`docs/profile-evidence.md`](docs/profile-evidence.md); other DSH releases
-stay `unknown` there until the same run is done on them.
+**Declared compatibility**: Node `>=22`, DSH `>=0.1.5-rc.1 <0.1.6-0 || >=0.1.7-rc.1 <0.2.0-0`
+(per-release record: `0.1.5-rc.1: compatible`, `0.1.5-rc.2: compatible`, `0.1.7-rc.2: compatible`),
+profile `web`. The range spells out the prerelease lines that were actually run, because a plain
+`>=0.1.5-rc.1 <0.2.0` silently excludes every prerelease on another `major.minor.patch` tuple —
+including `0.1.7-rc.2`, which is what the native app runs. `0.1.6-*` was never tested and is not
+claimed. The install/start/uninstall/rollback transcript on a disposable profile is in
+[`docs/profile-evidence.md`](docs/profile-evidence.md); other DSH releases stay `unknown` there
+until the same run is done on them.
 
 ## Install
 

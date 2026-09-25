@@ -17,8 +17,8 @@ English: [README.md](README.md)。
 
 ## 依赖
 
-- **DSH `>= 0.1.5-rc.1`**：本插件在原生右侧边栏上注册 tab 类型（`ctx.sidebarRightTabs`），正文挂进 `sidebar.right.pane.tab` 席位。
-- **`tinymist`**：先查 `PATH`，再查 `~/.local/bin`、`/opt/homebrew/bin`、`/usr/local/bin`、`~/.cargo/bin`；用 `tinymistPath` 可覆盖。
+- **DSH `>= 0.1.5-rc.1`**：本插件在原生右侧边栏上注册 tab 类型（`ctx.sidebarRightTabs`），正文挂进 `sidebar.right.pane.tab` 席位。这一对调用正是 0.1.7 那套可停靠侧边栏为自己文档化的扩展路径，所以 0.1.5 的单面板与 0.1.7 的可停靠／可浮动面板共用同一份代码；`keepMounted: true` 用来请 0.1.7 的宿主在折叠、切 tab、改变停靠位置时不要卸载已经打开过的 tab。
+- **`tinymist`**：先查 `PATH`，再查 `~/.local/bin`、`/opt/homebrew/bin`、`/usr/local/bin`、`~/.cargo/bin`；用 `tinymistPath` 可覆盖。**两个面共用这一个解析结果**——这正是插件在 `PATH` 只有 `/usr/bin:/bin:/usr/sbin:/sbin` 的宿主下仍能出预览的原因（原生应用的宿主进程就是这种环境）。
 - 本插件的前身（`~/.dsh/plugins/dsh-typst-preview`，挂在 `dsh-better-sidebar` 的文件查看器上）与 0.1.5 不兼容，已被本插件取代。
 
 ## 权限、依赖与失败边界
@@ -37,7 +37,7 @@ English: [README.md](README.md)。
 
 **缺东西或出错时**：没有 `tinymist` → 预览面报错、源码面退回纯文本；文件超过 `highlightMaxBytes`（4 MiB）→ 不高亮但仍可读；预览进程崩溃/被杀 → 回收器清理，下次按需重启；进程数有上限（`maxInstances`，外加两倍硬闸），闲置与游离的子进程都会被回收，所以丢掉的子进程活不过启动它的那个 tab。
 
-**声明的兼容范围**：Node `>=22`、DSH `>=0.1.5-rc.1 <0.2.0`（逐版记录：`0.1.5-rc.1: compatible`、`0.1.5-rc.2: compatible`）、profile `web`。一次性 Profile 上的安装/启动/卸载/回滚实测记录见 [`docs/profile-evidence.md`](docs/profile-evidence.md)；其它 DSH 版本在做同样的实测之前保持 `unknown`。
+**声明的兼容范围**：Node `>=22`、DSH `>=0.1.5-rc.1 <0.1.6-0 || >=0.1.7-rc.1 <0.2.0-0`（逐版记录：`0.1.5-rc.1: compatible`、`0.1.5-rc.2: compatible`、`0.1.7-rc.2: compatible`）、profile `web`。范围里把**真正跑过的预发布线**逐条写出来，因为 `>=0.1.5-rc.1 <0.2.0` 这种写法会静默排除掉其它 `major.minor.patch` 元组上的预发布版——包括原生应用正在跑的 `0.1.7-rc.2`。`0.1.6-*` 从未实测，不声明。一次性 Profile 上的安装/启动/卸载/回滚实测记录见 [`docs/profile-evidence.md`](docs/profile-evidence.md)；其它 DSH 版本在做同样的实测之前保持 `unknown`。
 
 ## 安装
 

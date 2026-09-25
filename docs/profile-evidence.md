@@ -212,3 +212,116 @@ one built against `0.1.5-rc.1`.
 
 Same conclusion as before: dropping the dependency and the `dsh.profile.bundles` entry is enough —
 the app boots and keeps serving, the plugin's routes are gone.
+
+## Third run: DSH `0.1.7-rc.2` (the desktop app), plugin `0.3.4`
+
+The native app stopped shipping a `dsh` CLI on `PATH` and runs its profile from an asar-packed
+runtime, so this run first had to reproduce the app's own conditions rather than assume them.
+
+- **Tested artifact**: the packed release tarball `dsh-typst-preview-0.3.4.tgz` (published as the
+  release asset `dsh-typst-preview.tgz`), installed from that file.
+- **Host**: macOS arm64, with the desktop app's **bundled** runtime —
+  `@deepseek-ai/dsh-desktop-runtime` `0.1.7-rc.2`, Node `v24.21.0`, pnpm `11.7.0`; tinymist
+  `v0.15.0-rc1` at `~/.local/bin/tinymist`.
+- **The condition that matters**: the app's *host process* runs with
+  `PATH=/usr/bin:/bin:/usr/sbin:/sbin` (read off the live process), so `tinymist` is **not** on
+  `PATH`. Everything below was run with exactly that `PATH`.
+- **Isolation**: `DSH_HOME=/tmp/dsh-017b`, profile created by the app's own CLI, invoked without
+  Electron's UI as
+  `ELECTRON_RUN_AS_NODE=1 "/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness" "…/app.asar/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js"`.
+  The real `~/.dsh` was never written to.
+- **Cleanup**: the temp home was deleted and the run left **no** `tinymist` processes behind.
+
+### Install
+
+```console
+$ DSH_HOME=/tmp/dsh-017b PATH=/tmp/dsh-bin:/usr/bin:/bin:/usr/sbin:/sbin \
+    ELECTRON_RUN_AS_NODE=1 "…/DeepSeek Harness" "…/app.asar/dsh/node_modules/@deepseek-ai/dsh/lib/bin.js" \
+    plugin --profile web add /…/dsh-typst-preview-0.3.4.tgz
+dependencies:
++ dsh-typst-preview file:/…/dsh-typst-preview-0.3.4.tgz
+Done in 392ms using pnpm v11.7.0
+
+$ node -e "const d=require('./node_modules/dsh-typst-preview/package.json');console.log(d.version, JSON.stringify(d.dsh.compatibility))"
+0.3.4 {"dsh":">=0.1.5-rc.1 <0.1.6-0 || >=0.1.7-rc.1 <0.2.0-0",
+       "dshReleases":{"0.1.5-rc.1":"compatible","0.1.5-rc.2":"compatible","0.1.7-rc.2":"compatible"},
+       "profiles":["web"]}
+```
+
+The version the app enforces is not this field. `evaluatePluginCompatibility` in
+`@deepseek-ai/dsh-app-boot` reads only `peerDependencies` whose name is `@deepseek-ai/dsh` or starts
+with `@deepseek-ai/dsh-`, and tests them with `semver.satisfies(runtime, range,
+{ includePrerelease: true })`; `engines.dsh` and `dsh.compatibility` are declarative — the manifest
+package's own README says so ("Current installers and loaders do not enforce `dsh.manifestVersion`
+or `engines.dsh`"). With `includePrerelease: true` the plugin's peer `^0.1.5-rc.1` admits
+`0.1.7-rc.2`, which is why the install is not refused; the declared range above is what a *reader*
+and the storefront see, and it is written the awkward way on purpose (see the README).
+
+### Start
+
+```console
+$ DSH_HOME=/tmp/dsh-017b PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+    ELECTRON_RUN_AS_NODE=1 "…/DeepSeek Harness" "…/bin.js" --profile web --port 3099 --no-open
+dsh web: http://127.0.0.1:3099/?token=…
+
+$ curl -s -b jar …/api/typst-preview/status
+{"ok":true,"executable":"/Users/limbo/.local/bin/tinymist",…,"processes":0,"instances":[]}
+
+$ curl -s -X POST -d '{"file":"/tmp/dsh-017b/ws/probe-typst.typ","cwd":"/tmp/dsh-017b/ws",
+                       "sessionId":"native","invert":"never"}' …/api/typst-preview/open
+{"ok":true,"token":"124344d7d7e430d262","url":"/api/typst-preview/p/124344d7d7e430d262/",
+ "ws":"/api/typst-preview/ws/124344d7d7e430d262",…}
+
+$ curl -s -o /dev/null -w '%{http_code} %{size_download} bytes\n' …/api/typst-preview/p/124344d7d7e430d262/
+200 1647738 bytes
+
+$ curl -s -X POST -d '{"file":"…/probe-typst.typ","cwd":"…/ws","offset":1}' …/api/typst-preview/source
+{"ok":true,…,"lineCount":6,"lines":6,"eof":true,"classes":["comment","string","raw","keyword",…]}
+
+$ curl -s -X POST -d '{"token":"…"}' …/api/typst-preview/close   ; # then processes 0
+{"ok":true,"stopped":true}
+```
+
+### The bug this run found
+
+The same source route against **plugin 0.3.3** on the same host answered
+
+```json
+{"ok":false,"error":"spawn tinymist ENOENT"}
+```
+
+while the preview route answered normally. The two halves did not agree on which `tinymist` they
+run: the preview manager resolves the configured name once (`resolveTinymistPath`: `PATH` first,
+then `~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`, `~/.cargo/bin`), and the source
+highlighter was handed the *raw* config value (`'tinymist'`), which it then `spawn`s with a
+`cwd`. Under a shell whose `PATH` includes `~/.local/bin` both work and the difference is
+invisible; under the desktop app's `/usr/bin:/bin:/usr/sbin:/sbin` the source face degrades to the
+plain paged reader. 0.3.4 passes the resolved executable to the highlighter, and the transcript
+above is what that looks like — the preview *and* the token runs, on a `PATH` with no `tinymist` on
+it at all. `node scripts/smoke.mjs` now fails on the old code and passes on the new one for the
+same reason.
+
+### Client half
+
+The session-scoped tab body is still the documented pair: `ctx.sidebarRightTabs.register({ id, kind,
+patterns?, priority?, canOpen?, title, guide?, keepMounted? })` and
+`ctx.slots.register({ name: 'sidebar.right.pane.tab', key: definition.id }, Body)` reading
+`{ sidebar, panel, tab }` from the framework-injected `useTabInfo()`. That is verbatim what the
+0.1.7 package's own README prescribes and what its shipped `files`, `documentpreview`, `plan`,
+`schedule`, `browser`, `terminal` and `subagent` types do, and the `.typ` claim still wins: the
+built-in text preview registers as `priority: 'fallback'` over `dsh-resource://file/**`, the
+plugin as `priority: 'extension'` over `*.typ`, and the resolver ranks by band first.
+
+```console
+$ node -e "…performance.getEntriesByType('resource')…"   # in a headless Chrome on the running app
+dsh-typst-preview/client.js            # fetched, in the same bundle request as the shell's own plugins
+                                         # console errors: none
+```
+
+**Not covered**: the pixel-level click-through of the new docking panel. The right bar in 0.1.7 is
+a `data-rightbar-*` DockKit surface whose expand control moved into the conversation header's
+corner seat — the control keeps its `data-sidebar-right-expand` attribute, but the two selectors
+`scripts/gui-check.mjs` drives the panel with (`data-dockkit-add-tab`, `data-files-state`) are gone,
+and the script's session fixture is stale as well (a throwaway home lists no session row, so it
+never reaches the panel). The client half is therefore covered by the registration contract above,
+by the fetched-and-errorless bundle, and by `scripts/render-check.mjs` — not by an eye on the panel.

@@ -96,10 +96,14 @@ function optionsOf(config: TypstPreviewConfig | undefined): TinymistOptions {
 }
 
 /** Merge declared config over the highlighting defaults. */
-function highlightOptionsOf(config: TypstPreviewConfig | undefined, base: TinymistOptions): HighlightOptions {
+function highlightOptionsOf(config: TypstPreviewConfig | undefined, tinymistPath: string): HighlightOptions {
   return {
-    tinymistPath: base.tinymistPath,
-    extraArgs: base.extraArgs,
+    // The *resolved* executable, never the raw config value: both halves must run
+    // the same `tinymist`, and only the preview manager searches the install
+    // locations. A bare `tinymist` here is an ENOENT waiting for a host that does
+    // not put `~/.local/bin` on `PATH` — which is exactly what the native app is.
+    tinymistPath,
+    extraArgs: config?.extraArgs ?? DEFAULT_OPTIONS.extraArgs,
     maxServers: positive(config?.highlightMaxServers, DEFAULT_HIGHLIGHT_OPTIONS.maxServers),
     requestTimeoutMs: DEFAULT_HIGHLIGHT_OPTIONS.requestTimeoutMs,
     idleTimeoutMs: positive(config?.highlightIdleTimeoutMs, DEFAULT_HIGHLIGHT_OPTIONS.idleTimeoutMs),
@@ -225,7 +229,9 @@ export function apply(ctx: Context, config?: TypstPreviewConfig): void {
   const options = optionsOf(config)
   const previews = new TinymistPreviews(options)
   const highlightEnabled = config?.highlight !== false
-  const highlighter = highlightEnabled ? new TypstHighlighter(highlightOptionsOf(config, options)) : undefined
+  const highlighter = highlightEnabled
+    ? new TypstHighlighter(highlightOptionsOf(config, previews.executable))
+    : undefined
   const lineLimit = pageLines(config?.highlightLines)
   /** Upgrade route per live token; the socket owner is the instance itself. */
   const upgrades = new Map<string, () => void>()

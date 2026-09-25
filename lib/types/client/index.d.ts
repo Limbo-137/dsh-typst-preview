@@ -28,6 +28,12 @@ interface SidebarRightTabDefinition {
     readonly priority?: 'extension' | 'builtin' | 'fallback';
     readonly canOpen?: (address: string) => boolean;
     readonly title: (address: string) => string;
+    /**
+     * Keep a visited body mounted across tab and Session changes, collapse and
+     * docking. Added in DSH 0.1.7; hosts that predate it ignore the field, which
+     * is why it is optional here rather than required.
+     */
+    readonly keepMounted?: boolean;
 }
 /** Stage-one registry, behind `ctx.sidebarRightTabs`. */
 interface SidebarRightTabRegistry {

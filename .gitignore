@@ -16,3 +16,6 @@ cdp-*/
 
 .DS_Store
 *.log
+
+# pnpm 11 writes install-time supply-chain settings here; not part of the package.
+pnpm-workspace.yaml
