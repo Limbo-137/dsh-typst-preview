@@ -16,8 +16,14 @@
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Duplex } from 'node:stream';
-/** Rewrite the preview page's WebSocket URL onto this instance's upgrade path. */
-export declare function patchPreviewHtml(html: string, wsPath: string): {
+/**
+ * Rewrite the preview page's WebSocket URL onto this instance's upgrade path.
+ *
+ * The address is absolute, not a path: the page may be served from the desktop
+ * app's own `dsh-app://app/…` origin, where a relative socket URL resolves to a
+ * scheme no WebSocket can be made from (see `webSocketUrl` in the plugin entry).
+ */
+export declare function patchPreviewHtml(html: string, wsUrl: string): {
     html: string;
     patched: boolean;
 };

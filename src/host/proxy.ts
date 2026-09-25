@@ -36,9 +36,15 @@ const HOP_BY_HOP = [
   'upgrade',
 ]
 
-/** Rewrite the preview page's WebSocket URL onto this instance's upgrade path. */
-export function patchPreviewHtml(html: string, wsPath: string): { html: string; patched: boolean } {
-  const replacement = `new URL(${JSON.stringify(wsPath)}, window.location.href)`
+/**
+ * Rewrite the preview page's WebSocket URL onto this instance's upgrade path.
+ *
+ * The address is absolute, not a path: the page may be served from the desktop
+ * app's own `dsh-app://app/…` origin, where a relative socket URL resolves to a
+ * scheme no WebSocket can be made from (see `webSocketUrl` in the plugin entry).
+ */
+export function patchPreviewHtml(html: string, wsUrl: string): { html: string; patched: boolean } {
+  const replacement = `new URL(${JSON.stringify(wsUrl)}, window.location.href)`
   if (html.includes(WS_URL_EXPRESSION)) {
     return { html: html.replace(WS_URL_EXPRESSION, replacement), patched: true }
   }

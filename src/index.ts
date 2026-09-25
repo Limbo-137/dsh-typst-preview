@@ -222,6 +222,28 @@ function upstreamPathOf(url: string | undefined, token: string): string {
   return rest.startsWith('/') ? rest : `/${rest}`
 }
 
+/**
+ * The absolute WebSocket address the preview page must dial.
+ *
+ * A relative path is not enough. Under the desktop app the page is served from
+ * `dsh-app://app/…`, and a relative socket URL there resolves to a `dsh-app:`
+ * address — a scheme no WebSocket can be made from. The absolute form is also what
+ * that app's transport expects: its session cancels every `ws://127.0.0.1/*`
+ * handshake whose `Origin` is not `dsh-app://app` and rewrites the ones that are
+ * (`onBeforeSendHeaders` in the desktop main bundle), so a loopback socket can only
+ * be opened by a document the app itself owns — which is exactly the document this
+ * page is. A browser needs nothing special here: the address is its own origin.
+ */
+function webSocketUrl(req: IncomingMessage, path: string): string {
+  const host = req.headers.host
+  if (host === undefined || host === '') return path
+  const forwarded = req.headers['x-forwarded-proto']
+  const proto = (Array.isArray(forwarded) ? forwarded[0] : forwarded)?.split(',')[0]?.trim().toLowerCase()
+  const encrypted = (req.socket as { encrypted?: boolean }).encrypted === true
+  const scheme = proto === 'https' || proto === 'wss' || encrypted ? 'wss' : 'ws'
+  return `${scheme}://${host}${path}`
+}
+
 /** Plugin body: own the fleet, claim the routes, release both on unload. */
 export function apply(ctx: Context, config?: TypstPreviewConfig): void {
   const webServer = ctx.webServer
@@ -444,9 +466,10 @@ export function apply(ctx: Context, config?: TypstPreviewConfig): void {
       }
       instance.lastUsed = Date.now()
       const wsPath = `${WS_PREFIX}${instance.token}`
+      const wsUrl = webSocketUrl(req, wsPath)
       proxyHttp(instance.dataPort, req, res, {
         path: upstreamPathOf(req.url, instance.token),
-        rewriteHtml: (html) => patchPreviewHtml(html, wsPath),
+        rewriteHtml: (html) => patchPreviewHtml(html, wsUrl),
       })
     },
   }

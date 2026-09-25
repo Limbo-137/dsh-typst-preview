@@ -58,14 +58,14 @@ viewer instead, change `priority` in `typstTabDefinition()` (`src/client/index.t
   only reason a preview appears at all.
 - The predecessor of this plugin (`~/.dsh/plugins/dsh-typst-preview`, mounted onto the
   `dsh-better-sidebar` file viewer) is not compatible with 0.1.5 and is superseded by this one.
-- **The desktop app has two origins, and a preview is a document, not a fetch.** `DeepSeek
-  Harness.app` serves its own window from `dsh-app://app/`; that scheme handler forwards ordinary
-  requests to the app's HTTP host but *cannot carry a WebSocket*. So the preview document itself is
-  loaded from the host's real HTTP origin — the one the shell publishes as
-  `__DSH_TRANSPORT__.streamBaseUrl`, the same field `@deepseek-ai/dsh-api-gateway` builds its own
-  socket from — and the page's own socket then resolves there too. The four routes the tab calls
-  stay on the document's own origin, which the scheme handler forwards. In a browser nothing is
-  published and the paths are used unchanged.
+- **The desktop app only lets its own document carry a loopback socket.** Its window is served
+  from `dsh-app://app/`, and the app's session cancels every `ws://127.0.0.1/*` handshake whose
+  `Origin` is not `dsh-app://app` — rewriting the ones that are onto the host's real origin, with the
+  host cookie and a same-origin fetch marker (`onBeforeSendHeaders` in the desktop main bundle). So
+  the preview document stays on the app's own origin, and the socket it dials is written
+  **absolutely** by the host (`ws://<host>/api/typst-preview/ws/<token>`): a relative socket URL under
+  `dsh-app:` resolves to a scheme no WebSocket can be made from. In a browser both are ordinary
+  same-origin URLs, and nothing is rewritten.
 
 ## Permissions, dependencies and failure bounds
 

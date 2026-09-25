@@ -404,3 +404,47 @@ only ever treats an explicit "not in the list" as gone; an unreachable or unpars
 that the app's own instance for a file survives a relay probe, and that `smoke` (20/20), `leak-check`
 and `render-check` stay green. **What was not**: the recovery itself end to end in the app's window
 — that still needs a restart to pick the build up.
+
+### What actually blocks the socket, and why 0.3.5 was the wrong turn (fixed in 0.3.7)
+
+0.3.5 moved the preview **document** onto the app's HTTP origin, on the reasoning that a page whose
+own base is `dsh-app:` cannot construct the WebSocket its body needs. That reasoning was right about
+the scheme and wrong about the remedy. The app decides this itself, in the desktop main bundle:
+
+```js
+session.defaultSession.webRequest.onBeforeSendHeaders({ urls: ["ws://127.0.0.1/*"] }, (details, callback) => {
+  if (hostUrl === void 0 || hostCookie === void 0 || details.webContentsId !== mainWindow?.webContents.id) { callback({}); return }
+  const target = new URL(hostUrl)
+  if (new URL(details.url).host !== target.host) { callback({}); return }
+  const headers = …                    // lower-cased copy of details.requestHeaders
+  if (headers.origin !== "dsh-app://app") { callback({ cancel: true }); return }
+  callback({ requestHeaders: { ...headers, origin: target.origin, cookie: hostCookie, "sec-fetch-site": "same-origin" } })
+})
+```
+
+A loopback WebSocket is allowed **only** when its `Origin` is `dsh-app://app`, and then the app
+rewrites that origin to the host's real one, attaches the host cookie and marks it same-origin. So:
+
+- **0.3.4 and earlier** — document on `dsh-app://app/…`, socket URL relative. The socket never got as
+  far as a handshake: a relative URL there resolves against `dsh-app:`, which is not a scheme a
+  WebSocket can be built from. The preview stayed blank. (The original report.)
+- **0.3.5** — document moved to `http://127.0.0.1:19387/…`, socket URL therefore absolute and correct,
+  but its `Origin` is now the HTTP origin, so the interceptor above **cancels** every attempt. The
+  console capture shows exactly that: tinymist's page loaded and ran, and the handshake failed with
+  `code 1006` over and over against `ws://127.0.0.1:19387/api/typst-preview/ws/<token>`.
+- **0.3.7** — document back on the app's own origin (the host-issued path, as a relative iframe `src`),
+  and the **socket address written by the host as an absolute** `ws[s]://<host>/api/typst-preview/ws/<token>`.
+  The page is then a document the app owns, its `Origin` is `dsh-app://app`, the interceptor admits and
+  rewrites it, and the plugin's own same-origin fence sees the rewritten `Origin` matching `Host`.
+
+The absolute address is built from the request's `Host` (`x-forwarded-proto`/`req.socket.encrypted`
+choose `wss`), so a browser gets its own origin and a reverse-proxied deployment still gets a
+WebSocket-scheme URL. tinymist's preview page is one self-contained document — two inline scripts and
+`data:` URIs, no external assets — so nothing else about the document's origin matters.
+
+**Verified**: the served page now carries
+`new URL("ws://127.0.0.1:3099/api/typst-preview/ws/<token>", window.location.href)`, and a headless
+browser loading that page still renders the compiled file (4 SVG nodes and the probe's own text);
+`smoke` (20/20, no `tinymist` on `PATH`), `leak-check` and `render-check` stay green. **Not verified**:
+the app's own window, which needs a restart to take the build — that half rests on the interceptor
+above, read out of the shipped main bundle.
