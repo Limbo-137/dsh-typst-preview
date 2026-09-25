@@ -361,3 +361,46 @@ in the last case with no `tinymist` on `PATH`. **What was not**: the desktop doc
 app's window needs a one-time token, so a `dsh-app://app` page embedding that frame could not be
 reproduced from outside the app. That half rests on the shell using the same field for exactly the
 same reason.
+
+### A dead token looked exactly like "the preview never opens" (fixed in 0.3.6)
+
+The report that followed 0.3.5 came with a console capture: tinymist's page had loaded — its own
+"plugin initialized, build info" line is in it — and then the same WebSocket failed over and over:
+
+```
+WebSocket connection to 'ws://127.0.0.1:19387/api/typst-preview/ws/d4d9b7a359264353b6e' failed
+CloseEvent {…, code: 1006, …}
+```
+
+Note the URL: **absolute, on the HTTP origin**. That is what 0.3.5 was for, and it is what the
+page now gets. The socket still failed because the *token was dead*: probing the running app shows
+the difference plainly.
+
+```console
+# live token
+$ curl -s -o /dev/null -w '%{http_code}' -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
+    -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
+    …/api/typst-preview/ws/<live token>
+101
+# after closing that same instance
+$ curl -s -o /dev/null -w '%{http_code}' … …/api/typst-preview/ws/<same token>
+000          # the route destroys the socket; a browser reports that as code 1006
+```
+
+`open` is idempotent per (file, colour), so any second caller asking for the same file gets the
+*same* instance — and closing it takes the first caller's preview with it. That is how the token in
+the capture died: this run's own `curl` probes reused and then closed the tab's instance. The
+lesson is in the plugin, not only in the probe: the page has no way to notice. It retries the token
+it was loaded with, for as long as the tab is open, and nothing on screen distinguishes "instance
+gone" from "still compiling".
+
+0.3.6 closes that: while a preview is the visible face, the tab asks
+`/api/typst-preview/status` every five seconds and, when its token is no longer listed, re-opens
+the preview and reloads the document — a few seconds of blank instead of a permanent one. The check
+only ever treats an explicit "not in the list" as gone; an unreachable or unparsable answer is
+"unknown" and changes nothing, so a broken host cannot start a re-open loop.
+
+**What was verified**: the two curl outcomes above (101 live, destroyed dead, on the running app),
+that the app's own instance for a file survives a relay probe, and that `smoke` (20/20), `leak-check`
+and `render-check` stay green. **What was not**: the recovery itself end to end in the app's window
+— that still needs a restart to pick the build up.

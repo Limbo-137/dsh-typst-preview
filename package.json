@@ -1,6 +1,6 @@
 {
   "name": "dsh-typst-preview",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "description": "DeepSeek Harness web plugin: live Typst preview as a native right-Sidebar tab, rendered by a per-file `tinymist preview` server proxied over the app origin, with the source face highlighted from tinymist's semantic tokens.",
   "type": "module",
   "main": "lib/index.js",

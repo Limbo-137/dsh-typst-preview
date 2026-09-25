@@ -31,6 +31,13 @@ first: the token the tab still holds may belong to an instance that was reaped w
 was hidden, and asking for a dead token used to answer with an error page instead of the
 document.
 
+The socket inside the preview page only ever retries the token it was loaded with, so an
+instance that disappears while its tab *stays* open — the instance cap evicting it, a crash,
+the idle reaper on a preview whose socket had already dropped — leaves that page reconnecting
+to nothing, with nothing on screen to say so. A visible preview therefore asks the host every
+few seconds whether its instance is still listed, and re-opens and reloads the document when it
+is not: the failure becomes a few seconds of blank instead of a permanent one.
+
 `.typ` is claimed through the Sidebar's tab-type registry at `priority: 'extension'`, which
 outranks the built-in plain-text fallback viewer. To send `.typ` back to the native text
 viewer instead, change `priority` in `typstTabDefinition()` (`src/client/index.tsx`) to

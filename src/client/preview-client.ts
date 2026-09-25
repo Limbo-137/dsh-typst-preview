@@ -35,6 +35,7 @@ export interface OpenPreviewResult {
 
 const OPEN_URL = '/api/typst-preview/open'
 const CLOSE_URL = '/api/typst-preview/close'
+const STATUS_URL = '/api/typst-preview/status'
 /** Long enough to survive a strict-mode remount, short enough to free the port. */
 const RELEASE_DELAY_MS = 1500
 
@@ -175,5 +176,36 @@ export function releaseAllPreviews(): void {
         return undefined
       })
       .catch(() => undefined)
+  }
+}
+
+/**
+ * Whether the host still lists this key's preview.
+ *
+ * The page inside the iframe only ever retries the token it was loaded with, so a
+ * preview that disappears while its tab stays open — the instance cap evicting it, a
+ * crash, the idle reaper on an instance whose socket had already dropped — leaves
+ * that tab retrying a dead token forever with nothing on screen to say so. Asking
+ * costs one small same-origin GET.
+ *
+ * @param key - the identity passed to {@link acquirePreview}.
+ * @returns `false` only when the host answered and this key's token was not in it;
+ *          `undefined` when there is nothing to ask about, or the answer is unusable,
+ *          which must never be read as "gone".
+ */
+export async function previewAlive(key: string): Promise<boolean | undefined> {
+  const entry = entries.get(key)
+  if (entry === undefined) return undefined
+  const result = await entry.promise.catch(() => undefined)
+  if (result === undefined || !result.ok || result.token === undefined) return undefined
+  try {
+    const response = await fetch(STATUS_URL, { credentials: 'same-origin' })
+    if (!response.ok) return undefined
+    const body: unknown = await response.json()
+    const list = (body as { instances?: unknown }).instances
+    if (!Array.isArray(list)) return undefined
+    return list.some((instance) => (instance as { token?: unknown }).token === result.token)
+  } catch {
+    return undefined
   }
 }

@@ -25,7 +25,7 @@ import type { ReactElement, ReactNode } from 'react'
 import { CodeBlock, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 import { basenameOf, parseFileAddress } from './address'
 import { appUrl } from './base'
-import { acquirePreview, refreshPreview, releaseAllPreviews, releasePreview, type InvertMode } from './preview-client'
+import { acquirePreview, previewAlive, refreshPreview, releaseAllPreviews, releasePreview, type InvertMode } from './preview-client'
 import { fetchSourcePage, type HighlightedSourcePage } from './source-client'
 
 /* -------------------------------------------------------------------------- *
@@ -367,6 +367,8 @@ const EMPTY_SOURCE: SourceState = {
 
 const INVERT_STORAGE_KEY = 'dsh-typst-preview:invert'
 const INVERT_CYCLE: readonly InvertMode[] = ['never', 'auto', 'always']
+/** How often a visible preview asks whether its instance is still there. */
+const LIVE_CHECK_MS = 5000
 
 function readStoredInvert(): InvertMode {
   try {
@@ -479,6 +481,25 @@ export function TypstPreviewTab(props: TypstPreviewProps): ReactElement {
     reopenPreview()
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only the visibility edge matters
   }, [previewMounted])
+
+  // A preview can vanish while this tab stays open — the instance cap evicting it, a
+  // crash, the idle reaper on an instance whose socket had already dropped. The page
+  // inside the iframe keeps retrying the token it was loaded with, so nothing comes
+  // back on its own; the tab simply sits on a dead socket. Ask, and re-open when the
+  // answer is no. Only the visible face polls: a hidden tab holds its reference and
+  // re-opens through the effect above.
+  useEffect(() => {
+    if (!previewMounted || key === undefined || preview.status !== 'ready') return
+    const timer = setInterval(() => {
+      void previewAlive(key).then((alive) => {
+        if (alive !== false) return
+        reopenPreview()
+        setFrameNonce((nonce) => nonce + 1)
+      })
+    }, LIVE_CHECK_MS)
+    return () => clearInterval(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- reopenPreview reads these same inputs
+  }, [key, preview.status, previewMounted])
 
   // Source face: the highlighted host reader when it can, the paged plain-text
   // reader when it cannot. The first page is fetched when the face appears, and

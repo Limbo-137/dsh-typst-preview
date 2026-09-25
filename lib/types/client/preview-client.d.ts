@@ -58,4 +58,19 @@ export declare function refreshPreview(key: string, request: OpenPreviewRequest)
 export declare function releasePreview(key: string): void;
 /** Stop holding anything: used when the plugin unloads. */
 export declare function releaseAllPreviews(): void;
+/**
+ * Whether the host still lists this key's preview.
+ *
+ * The page inside the iframe only ever retries the token it was loaded with, so a
+ * preview that disappears while its tab stays open — the instance cap evicting it, a
+ * crash, the idle reaper on an instance whose socket had already dropped — leaves
+ * that tab retrying a dead token forever with nothing on screen to say so. Asking
+ * costs one small same-origin GET.
+ *
+ * @param key - the identity passed to {@link acquirePreview}.
+ * @returns `false` only when the host answered and this key's token was not in it;
+ *          `undefined` when there is nothing to ask about, or the answer is unusable,
+ *          which must never be read as "gone".
+ */
+export declare function previewAlive(key: string): Promise<boolean | undefined>;
 //# sourceMappingURL=preview-client.d.ts.map
