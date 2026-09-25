@@ -325,3 +325,39 @@ corner seat — the control keeps its `data-sidebar-right-expand` attribute, but
 and the script's session fixture is stale as well (a throwaway home lists no session row, so it
 never reaches the panel). The client half is therefore covered by the registration contract above,
 by the fetched-and-errorless bundle, and by `scripts/render-check.mjs` — not by an eye on the panel.
+
+### The desktop app has a second origin (found by this run, fixed in 0.3.5)
+
+Reported from the app: the tab mounts and the **source** face works, but the **preview** stays
+blank. The app's own code explains it.
+
+- `DeepSeek Harness.app` serves its window from `dsh-app://app/`. Its main bundle registers
+  `protocol.handle("dsh-app", …)`, whose `app` branch hands the request to
+  `forwardWebRequest(request, hostUrl, hostCookie)` — an ordinary HTTP forward. That is why every
+  `fetch` the tab makes (`open`, `close`, `source`) answers normally.
+- A WebSocket cannot travel that way. The shell says so itself: `@deepseek-ai/dsh-api-gateway`
+  builds its own socket as
+  `new URL(REMOTE_STREAM_MUX_PATH.slice(1), globals.__DSH_TRANSPORT__?.streamBaseUrl ?? document.baseURI)`
+  — a fallback to `streamBaseUrl` that only exists because the document's own base is not usable —
+  and `@deepseek-ai/dsh-client-connection/README.md` describes the field as "the HTTP origin of its
+  owned Host … the Gateway uses that origin for its WebSocket".
+- The plugin rewrites tinymist's socket to
+  `new URL("/api/typst-preview/ws/<token>", window.location.href)`, a **relative** path. Served
+  through `dsh-app://app/api/typst-preview/p/<token>/`, that resolves against a `dsh-app:` URL, and
+  no WebSocket can be constructed from a scheme that is not http(s)/ws(s). The page loads; the
+  socket never opens; the render never arrives. Source worked all along because it is a `fetch`.
+
+0.3.5 resolves the preview document — and the toolbar's "open in new tab" — against
+`__DSH_TRANSPORT__.streamBaseUrl` when the shell publishes one. The document then lives on the
+app's HTTP origin, its own relative socket resolves to `ws://127.0.0.1:19387/…`, and that request
+still satisfies the plugin's same-origin fence (`Origin` host equals `Host`). In a browser the
+global is absent and the paths are used unchanged.
+
+**What was verified for this fix**: framing the absolute
+`http://127.0.0.1:19387/api/typst-preview/p/<token>/` inside an ordinary HTTP document rendered the
+compiled file (4 SVG nodes and the probe's own text) in a headless browser, so the page and its
+data path are intact when addressed that way; `smoke`, `leak-check` and `render-check` stay green,
+in the last case with no `tinymist` on `PATH`. **What was not**: the desktop document itself — the
+app's window needs a one-time token, so a `dsh-app://app` page embedding that frame could not be
+reproduced from outside the app. That half rests on the shell using the same field for exactly the
+same reason.

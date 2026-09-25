@@ -20,6 +20,7 @@ English: [README.md](README.md)。
 - **DSH `>= 0.1.5-rc.1`**：本插件在原生右侧边栏上注册 tab 类型（`ctx.sidebarRightTabs`），正文挂进 `sidebar.right.pane.tab` 席位。这一对调用正是 0.1.7 那套可停靠侧边栏为自己文档化的扩展路径，所以 0.1.5 的单面板与 0.1.7 的可停靠／可浮动面板共用同一份代码；`keepMounted: true` 用来请 0.1.7 的宿主在折叠、切 tab、改变停靠位置时不要卸载已经打开过的 tab。
 - **`tinymist`**：先查 `PATH`，再查 `~/.local/bin`、`/opt/homebrew/bin`、`/usr/local/bin`、`~/.cargo/bin`；用 `tinymistPath` 可覆盖。**两个面共用这一个解析结果**——这正是插件在 `PATH` 只有 `/usr/bin:/bin:/usr/sbin:/sbin` 的宿主下仍能出预览的原因（原生应用的宿主进程就是这种环境）。
 - 本插件的前身（`~/.dsh/plugins/dsh-typst-preview`，挂在 `dsh-better-sidebar` 的文件查看器上）与 0.1.5 不兼容，已被本插件取代。
+- **原生应用有两个 origin，而预览是一个「文档」不是一次 fetch。** `DeepSeek Harness.app` 的窗口是从 `dsh-app://app/` 提供的；这个自定义 scheme 会把普通请求转发给应用的 HTTP 宿主，但**承载不了 WebSocket**。所以预览**文档本身**要从宿主真正的 HTTP origin 加载——也就是 shell 用 `__DSH_TRANSPORT__.streamBaseUrl` 公布的那个（`@deepseek-ai/dsh-api-gateway` 自己的 socket 就是从它拼出来的）；文档里的 socket 于是也落在同一个 origin 上。tab 调用的那四条路由仍走文档自己的 origin、由 scheme handler 转发。在浏览器里没有这个全局变量，路径按原样使用。
 
 ## 权限、依赖与失败边界
 

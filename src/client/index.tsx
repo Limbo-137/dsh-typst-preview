@@ -24,6 +24,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactElement, ReactNode } from 'react'
 import { CodeBlock, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 import { basenameOf, parseFileAddress } from './address'
+import { appUrl } from './base'
 import { acquirePreview, refreshPreview, releaseAllPreviews, releasePreview, type InvertMode } from './preview-client'
 import { fetchSourcePage, type HighlightedSourcePage } from './source-client'
 
@@ -616,7 +617,7 @@ export function TypstPreviewTab(props: TypstPreviewProps): ReactElement {
         data-typst-tool="external"
         disabled={preview.status !== 'ready'}
         onClick={() => {
-          if (preview.url !== undefined) globalThis.open(preview.url, '_blank', 'noopener')
+          if (preview.url !== undefined) globalThis.open(appUrl(preview.url), '_blank', 'noopener')
         }}
       >
         <IconExternal />
@@ -705,8 +706,11 @@ export function TypstPreviewTab(props: TypstPreviewProps): ReactElement {
               <iframe
                 key={frameNonce}
                 className="dshTypstPreview_frame"
+                // The host's own path, kept readable for diagnostics; the document
+                // itself is loaded from the app's HTTP origin when the shell has one
+                // (`appUrl`), because the page's WebSocket cannot live on `dsh-app:`.
                 data-typst-frame={preview.url}
-                src={`${preview.url}?r=${String(frameNonce)}`}
+                src={`${appUrl(preview.url)}?r=${String(frameNonce)}`}
                 title={file ?? t('mode.preview.aria')}
               />
             )
