@@ -90,12 +90,19 @@ still reads; a crashed or killed preview is reaped and started again on demand; 
 (`maxInstances`, plus a hard ceiling of twice that) and both idle and orphaned children are
 reaped, so a lost child cannot outlive the tab that started it.
 
-**Declared compatibility**: Node `>=22`, DSH `>=0.1.5-rc.1 <0.1.6-0 || >=0.1.7-rc.1 <0.2.0-0`
-(per-release record: `0.1.5-rc.1: compatible`, `0.1.5-rc.2: compatible`, `0.1.7-rc.2: compatible`),
-profile `web`. The range spells out the prerelease lines that were actually run, because a plain
-`>=0.1.5-rc.1 <0.2.0` silently excludes every prerelease on another `major.minor.patch` tuple —
-including `0.1.7-rc.2`, which is what the native app runs. `0.1.6-*` was never tested and is not
-claimed. The install/start/uninstall/rollback transcript on a disposable profile is in
+**Declared compatibility**: Node `>=22`, DSH `>=0.1.5-rc.1 <0.1.6-0 || >=0.1.7-rc.1 <0.2.0-0 || >=0.2.0-rc.1 <0.3.0-0`
+(per-release record: `0.1.5-rc.1: compatible`, `0.1.5-rc.2: compatible`, `0.1.7-rc.2: compatible`,
+`0.2.0-rc.1: compatible`), profile `web`. The range spells out the prerelease lines that were
+actually run, because a plain `>=0.1.5-rc.1 <0.2.0` silently excludes every prerelease on another
+`major.minor.patch` tuple — including `0.1.7-rc.2` and `0.2.0-rc.1`, which is what the native app
+runs. `0.1.6-*` was never tested and is not claimed.
+
+The same range is carried as the `@deepseek-ai/dsh-client-ui-primitives` **peer** range, which is the
+part DSH actually enforces: `evaluatePluginCompatibility` reads every `@deepseek-ai/dsh*` peer and
+asks whether the **runtime version** satisfies it (`semver.satisfies(runtime, range, {
+includePrerelease: true })`). So a peer range here is a statement about DSH releases, not about the
+primitives package's own version — and a range that stops below the running release makes the plugin
+manager refuse to install or update the plugin, even though the code is fine. The install/start/uninstall/rollback transcript on a disposable profile is in
 [`docs/profile-evidence.md`](docs/profile-evidence.md); other DSH releases stay `unknown` there
 until the same run is done on them.
 

@@ -38,7 +38,9 @@ English: [README.md](README.md)。
 
 **缺东西或出错时**：没有 `tinymist` → 预览面报错、源码面退回纯文本；文件超过 `highlightMaxBytes`（4 MiB）→ 不高亮但仍可读；预览进程崩溃/被杀 → 回收器清理，下次按需重启；进程数有上限（`maxInstances`，外加两倍硬闸），闲置与游离的子进程都会被回收，所以丢掉的子进程活不过启动它的那个 tab。
 
-**声明的兼容范围**：Node `>=22`、DSH `>=0.1.5-rc.1 <0.1.6-0 || >=0.1.7-rc.1 <0.2.0-0`（逐版记录：`0.1.5-rc.1: compatible`、`0.1.5-rc.2: compatible`、`0.1.7-rc.2: compatible`）、profile `web`。范围里把**真正跑过的预发布线**逐条写出来，因为 `>=0.1.5-rc.1 <0.2.0` 这种写法会静默排除掉其它 `major.minor.patch` 元组上的预发布版——包括原生应用正在跑的 `0.1.7-rc.2`。`0.1.6-*` 从未实测，不声明。一次性 Profile 上的安装/启动/卸载/回滚实测记录见 [`docs/profile-evidence.md`](docs/profile-evidence.md)；其它 DSH 版本在做同样的实测之前保持 `unknown`。
+**声明的兼容范围**：Node `>=22`、DSH `>=0.1.5-rc.1 <0.1.6-0 || >=0.1.7-rc.1 <0.2.0-0 || >=0.2.0-rc.1 <0.3.0-0`（逐版记录：`0.1.5-rc.1: compatible`、`0.1.5-rc.2: compatible`、`0.1.7-rc.2: compatible`、`0.2.0-rc.1: compatible`）、profile `web`。范围里把**真正跑过的预发布线**逐条写出来，因为 `>=0.1.5-rc.1 <0.2.0` 这种写法会静默排除掉其它 `major.minor.patch` 元组上的预发布版——包括原生应用正在跑的 `0.1.7-rc.2` 与 `0.2.0-rc.1`。`0.1.6-*` 从未实测，不声明。
+
+同一个范围也写在 `@deepseek-ai/dsh-client-ui-primitives` 的 **peer** 里——那才是 DSH 真正强制的一处：`evaluatePluginCompatibility` 会读每一个 `@deepseek-ai/dsh*` peer，拿**运行时版本**去匹配（`semver.satisfies(runtime, range, { includePrerelease: true })`）。所以这里的 peer 范围声明的是「支持哪些 DSH 版本」，不是那个包自身的版本；范围一旦停在当前 release 之下，插件管理器就会**拒绝安装或更新**，哪怕代码本身完全没问题。一次性 Profile 上的安装/启动/卸载/回滚实测记录见 [`docs/profile-evidence.md`](docs/profile-evidence.md)；其它 DSH 版本在做同样的实测之前保持 `unknown`。
 
 ## 安装
 

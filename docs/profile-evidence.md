@@ -448,3 +448,67 @@ browser loading that page still renders the compiled file (4 SVG nodes and the p
 `smoke` (20/20, no `tinymist` on `PATH`), `leak-check` and `render-check` stay green. **Not verified**:
 the app's own window, which needs a restart to take the build — that half rests on the interceptor
 above, read out of the shipped main bundle.
+
+## Fourth run: DSH `0.2.0-rc.1`, plugin `0.3.8`
+
+The app was updated from `0.1.7-rc.2` to `0.2.0-rc.1` with the plugin already installed, and the
+question was whether it still holds. It does — but the manifest did not, and that turned out to be
+the whole story.
+
+- **Runtime**: `@deepseek-ai/dsh-desktop-runtime` `0.2.0-rc.1` (core, `host-webserver`,
+  `client-ui-sidebar-right` and `client-ui-primitives` all `0.2.0-rc.1`; cordis still `4.0.4`).
+  Tested with the app's own bundle, in a disposable `DSH_HOME`, as in the third run.
+- **What did not change**: the app's `ws://127.0.0.1/*` interceptor (same `Origin: dsh-app://app`
+  rule, verbatim), `forwardWebRequest`'s origin check and host-cookie injection, the
+  `sidebarRightTabs` register contract (`patterns`/`canOpen`/`priority`/`guide`/`keepMounted`), the
+  slots the plugin registers into (`sidebar.right.pane.tab` and `.title`, declared by
+  `rightbar.session`), `useTabInfo`, `locale.register(ns, localeOrDicts, dict)`, the remote
+  `workspaceFiles.read`, and the two primitives symbols (`CodeBlock`, `writeClipboard`). Rebuilding
+  the client bundle against `@deepseek-ai/dsh-client-ui-primitives@0.2.0-rc.1` produced a
+  **byte-identical** `lib/client.js`, which is the same evidence the 0.1.5 run used.
+
+### The one thing that did break: an install is refused
+
+`dsh plugin --profile web add …` on `0.2.0-rc.1` said no:
+
+```console
+dsh: installation rejected: Plugin dsh-typst-preview@0.3.7 is incompatible with dsh 0.2.0-rc.1:
+     peerDependencies {"@deepseek-ai/dsh-client-ui-primitives":"^0.1.5-rc.1"}. …
+     To accept this risk explicitly, grant the exact-version exemption for
+     dsh-typst-preview@0.3.7 on dsh 0.2.0-rc.1 with `dsh plugin allow-version` …
+dsh: nothing was installed.
+```
+
+That is `evaluatePluginCompatibility` doing exactly what it says on the tin: for every
+`@deepseek-ai/dsh*` peer it asks whether the **runtime version** satisfies the range. Our peer range
+was `^0.1.5-rc.1`, i.e. `<0.2.0` — so `0.2.0-rc.1` failed it. Note what this is *not*: it is not
+about `@deepseek-ai/dsh-client-ui-primitives`'s own version, which tracks the runtime, and it is not
+enforced at boot (the already-installed plugin loaded and ran fine). It gates install and update, so
+on a fresh profile the plugin would simply have been uninstallable, and in the app it would have
+been stuck at whatever version was installed before the upgrade.
+
+0.3.8 widens the peer range to the same explicit prerelease lines as the declared range —
+`>=0.1.5-rc.1 <0.1.6-0 || >=0.1.7-rc.1 <0.2.0-0 || >=0.2.0-rc.1 <0.3.0-0` — and adds
+`0.2.0-rc.1: compatible` to `dshReleases`. The range was checked against every release we have
+evidence for, in both the plain and the `includePrerelease` reading: `0.1.5-rc.1/rc.2`,
+`0.1.7-rc.2`, `0.1.7`, `0.2.0-rc.1` and `0.2.0` pass; `0.1.6-alpha.1` and `0.3.0-rc.1` do not.
+
+### Verified after the fix
+
+A **plain** install (no `allow-version` exemption, fresh `DSH_HOME`) succeeds on `0.2.0-rc.1`, and
+the installed build then answers end to end:
+
+```console
+$ curl -b jar …/api/typst-preview/status          # 200
+{"ok":true,"executable":"/Users/limbo/.local/bin/tinymist",…,"processes":0,"instances":[]}
+$ # open → page → source → close
+page: 200 1647751 bytes
+new URL("ws://127.0.0.1:3099/api/typst-preview/ws/<token>", window.location.href)
+WebSocket relay: OPEN
+close: {"ok":true,"stopped":true}
+```
+
+The shell also still preloads `dsh-typst-preview/client.js`, and `smoke` (20/20), `leak-check` and
+`render-check` are green on the new baseline. **Not covered**: a first-principles visual pass in the
+app's own window — the app has to be restarted onto 0.3.8 for that, and the tabs it already had open
+were opened by 0.3.7.
